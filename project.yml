@@ -11,6 +11,8 @@ targets:
     info:
       path: Sources/LevelUp/Info.plist
       properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         CFBundleDisplayName: LevelUp
         UISupportedInterfaceOrientations:
