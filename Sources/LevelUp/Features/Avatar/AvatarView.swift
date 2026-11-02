@@ -99,36 +99,33 @@ struct AvatarView: View {
             if node.morpher != nil { found = node }
         }
 
+        // TEMPORÄR fürs Debugging: dunkler Hintergrund + einfaches Licht + knallrotes
+        // Material, um zu sehen, ob überhaupt eine Silhouette gerendert wird.
+        loaded.background.contents = UIColor.darkGray
+
         setupLighting(in: loaded)
         let (camera, cameraInfo) = setupCamera(in: loaded, target: found)
+
+        let materialCount = found?.geometry?.materials.count ?? -1
+        found?.geometry?.materials.forEach { $0.diffuse.contents = UIColor.red }
 
         scene = loaded
         morphNode = found
         cameraNode = camera
 
         let morphInfo = found != nil ? "Morpher: \(found?.morpher?.targets.count ?? 0) Target(s)" : "Kein Morpher gefunden"
-        statusText = "Meshes: \(meshCount) · \(morphInfo) · \(cameraInfo)"
+        statusText = "Meshes: \(meshCount) · \(morphInfo) · Materials: \(materialCount) · \(cameraInfo)"
 
         updateMorphWeights()
-        applySkinTone()
     }
 
     private func setupLighting(in scene: SCNScene) {
-        let key = SCNLight()
-        key.type = .directional
-        key.intensity = 800
-        let keyNode = SCNNode()
-        keyNode.light = key
-        keyNode.eulerAngles = SCNVector3(-Float.pi / 4, Float.pi / 4, 0)
-        scene.rootNode.addChildNode(keyNode)
-
-        let ambient = SCNLight()
-        ambient.type = .ambient
-        ambient.intensity = 400
-        ambient.color = UIColor(white: 0.9, alpha: 1)
-        let ambientNode = SCNNode()
-        ambientNode.light = ambient
-        scene.rootNode.addChildNode(ambientNode)
+        let light = SCNLight()
+        light.type = .omni
+        let lightNode = SCNNode()
+        lightNode.light = light
+        lightNode.position = SCNVector3(0, 2, 5)
+        scene.rootNode.addChildNode(lightNode)
     }
 
     /// Kamera-Distanz aus der tatsächlichen Bounding-Sphere des Ziel-Nodes berechnet
