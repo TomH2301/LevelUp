@@ -100,14 +100,14 @@ struct AvatarView: View {
         }
 
         setupLighting(in: loaded)
-        let camera = setupCamera(in: loaded)
+        let (camera, cameraInfo) = setupCamera(in: loaded, target: found)
 
         scene = loaded
         morphNode = found
         cameraNode = camera
 
         let morphInfo = found != nil ? "Morpher: \(found?.morpher?.targets.count ?? 0) Target(s)" : "Kein Morpher gefunden"
-        statusText = "Meshes: \(meshCount) · \(morphInfo)"
+        statusText = "Meshes: \(meshCount) · \(morphInfo) · \(cameraInfo)"
 
         updateMorphWeights()
         applySkinTone()
@@ -131,17 +131,34 @@ struct AvatarView: View {
         scene.rootNode.addChildNode(ambientNode)
     }
 
-    /// Feste, konservative Kamera-Position statt Bounding-Box-Berechnung:
-    /// CharMorph-Charaktere stehen lebensgroß (Meter-Maßstab) mit den Füßen nahe Y=0.
-    /// `allowsCameraControl` lässt dich ohnehin frei zoomen/schwenken.
-    private func setupCamera(in scene: SCNScene) -> SCNNode {
+    /// Kamera-Distanz aus der tatsächlichen Bounding-Sphere des Ziel-Nodes berechnet
+    /// (skalierungsunabhängig) statt aus einer angenommenen "Meter"-Größe, die sich
+    /// beim Export als falsch herausgestellt hat.
+    private func setupCamera(in scene: SCNScene, target: SCNNode?) -> (SCNNode, String) {
         let camera = SCNCamera()
         let cameraNode = SCNNode()
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 1.0, 3.2)
-        cameraNode.look(at: SCNVector3(0, 1.0, 0))
+
+        guard let target else {
+            cameraNode.position = SCNVector3(0, 1, 3)
+            cameraNode.look(at: SCNVector3(0, 1, 0))
+            scene.rootNode.addChildNode(cameraNode)
+            return (cameraNode, "kein Ziel-Node für Kamera")
+        }
+
+        let (localCenter, radius) = target.boundingSphere
+        let worldCenter = target.convertPosition(localCenter, to: nil)
+        let distance = max(radius * 3, 0.01)
+
+        cameraNode.position = SCNVector3(worldCenter.x, worldCenter.y, worldCenter.z + distance)
+        cameraNode.look(at: worldCenter)
         scene.rootNode.addChildNode(cameraNode)
-        return cameraNode
+
+        let info = String(
+            format: "center=(%.3f, %.3f, %.3f) radius=%.4f",
+            worldCenter.x, worldCenter.y, worldCenter.z, radius
+        )
+        return (cameraNode, info)
     }
 
     private func updateMorphWeights() {
