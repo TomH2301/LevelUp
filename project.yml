@@ -18,8 +18,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.hemme.levelup
         SWIFT_VERSION: "5.0"
-        CODE_SIGNING_ALLOWED: NO
-        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGN_IDENTITY: ""
         TARGETED_DEVICE_FAMILY: "1"
         MARKETING_VERSION: "0.1"
