@@ -11,6 +11,13 @@ struct LevelUpApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [TaskItem.self, BodyMetricEntry.self])
+        .modelContainer(for: [
+            TaskItem.self,
+            BodyMetricEntry.self,
+            Exercise.self,
+            TrainingPlan.self,
+            PlanDay.self,
+            PlanExercise.self
+        ])
     }
 }

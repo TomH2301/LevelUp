@@ -12,6 +12,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("Körper", systemImage: "chart.line.uptrend.xyaxis")
                 }
+
+            TrainingPlanView()
+                .tabItem {
+                    Label("Training", systemImage: "dumbbell.fill")
+                }
         }
     }
 }
