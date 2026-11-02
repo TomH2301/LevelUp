@@ -54,6 +54,9 @@ jobs:
           VERSION_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           SIZE="$(stat -f%z LevelUp.ipa)"
           DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/latest-build/LevelUp.ipa"
+          ICON_URL="https://github.com/${{ github.repository }}/releases/download/latest-build/icon.png"
+
+          convert -size 512x512 xc:'#3f6fd6' icon.png
 
           cat > source.json <<EOF
           {
@@ -69,7 +72,7 @@ jobs:
                 "versionDescription": "Automatischer Dev-Build (Run #${{ github.run_number }})",
                 "downloadURL": "$DOWNLOAD_URL",
                 "localizedDescription": "LevelUp Fitness-RPG (Dev-Build)",
-                "iconURL": "",
+                "iconURL": "$ICON_URL",
                 "size": $SIZE
               }
             ]
@@ -77,9 +80,9 @@ jobs:
           EOF
 
           if gh release view latest-build --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release upload latest-build LevelUp.ipa source.json --repo "${{ github.repository }}" --clobber
+            gh release upload latest-build LevelUp.ipa source.json icon.png --repo "${{ github.repository }}" --clobber
           else
-            gh release create latest-build LevelUp.ipa source.json \
+            gh release create latest-build LevelUp.ipa source.json icon.png \
               --repo "${{ github.repository }}" \
               --title "Latest Dev Build" \
               --notes "Wird bei jedem Push automatisch aktualisiert. Source-URL für AltStore: siehe source.json." \
