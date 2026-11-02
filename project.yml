@@ -9,6 +9,7 @@ targets:
     sources:
       - path: Sources/LevelUp
     info:
+      path: Sources/LevelUp/Info.plist
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: LevelUp
