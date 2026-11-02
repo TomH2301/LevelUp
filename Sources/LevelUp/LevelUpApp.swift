@@ -17,7 +17,9 @@ struct LevelUpApp: App {
             Exercise.self,
             TrainingPlan.self,
             PlanDay.self,
-            PlanExercise.self
+            PlanExercise.self,
+            WorkoutSession.self,
+            SetEntry.self
         ])
     }
 }

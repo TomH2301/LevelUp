@@ -17,6 +17,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("Training", systemImage: "dumbbell.fill")
                 }
+
+            WorkoutView()
+                .tabItem {
+                    Label("Workout", systemImage: "play.circle.fill")
+                }
         }
     }
 }
