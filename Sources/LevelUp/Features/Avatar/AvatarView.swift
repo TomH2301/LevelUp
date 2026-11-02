@@ -12,6 +12,7 @@ struct AvatarView: View {
     @State private var cameraNode: SCNNode?
     @State private var morphNode: SCNNode?
     @State private var isCalibratingPhoto = false
+    @State private var statusText: String = "Lädt…"
 
     private var profile: AvatarProfile? { profiles.first }
 
@@ -21,6 +22,11 @@ struct AvatarView: View {
                 SceneView(scene: scene, pointOfView: cameraNode, options: [.allowsCameraControl])
                     .frame(maxHeight: .infinity)
                     .background(Color.black.opacity(0.05))
+
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
 
                 if let profile {
                     Picker("Geschlecht", selection: Binding(
@@ -68,22 +74,40 @@ struct AvatarView: View {
     }
 
     private func loadScene() {
-        guard let profile else { return }
+        guard let profile else {
+            statusText = "Kein Avatar-Profil."
+            return
+        }
         let resourceName = profile.gender == .female ? "LevelUp_Female" : "LevelUp_Male"
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "usdz"),
-              let loaded = try? SCNScene(url: url) else { return }
+        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "usdz") else {
+            statusText = "Datei \(resourceName).usdz nicht im App-Bundle gefunden."
+            return
+        }
+
+        let loaded: SCNScene
+        do {
+            loaded = try SCNScene(url: url)
+        } catch {
+            statusText = "SCNScene-Ladefehler: \(error.localizedDescription)"
+            return
+        }
 
         var found: SCNNode?
+        var meshCount = 0
         loaded.rootNode.enumerateHierarchy { node, _ in
+            if node.geometry != nil { meshCount += 1 }
             if node.morpher != nil { found = node }
         }
 
         setupLighting(in: loaded)
-        let camera = setupCamera(in: loaded, framing: found ?? loaded.rootNode)
+        let camera = setupCamera(in: loaded)
 
         scene = loaded
         morphNode = found
         cameraNode = camera
+
+        let morphInfo = found != nil ? "Morpher: \(found?.morpher?.targets.count ?? 0) Target(s)" : "Kein Morpher gefunden"
+        statusText = "Meshes: \(meshCount) · \(morphInfo)"
 
         updateMorphWeights()
         applySkinTone()
@@ -92,7 +116,7 @@ struct AvatarView: View {
     private func setupLighting(in scene: SCNScene) {
         let key = SCNLight()
         key.type = .directional
-        key.intensity = 1100
+        key.intensity = 800
         let keyNode = SCNNode()
         keyNode.light = key
         keyNode.eulerAngles = SCNVector3(-Float.pi / 4, Float.pi / 4, 0)
@@ -100,23 +124,22 @@ struct AvatarView: View {
 
         let ambient = SCNLight()
         ambient.type = .ambient
-        ambient.intensity = 350
+        ambient.intensity = 400
         ambient.color = UIColor(white: 0.9, alpha: 1)
         let ambientNode = SCNNode()
         ambientNode.light = ambient
         scene.rootNode.addChildNode(ambientNode)
     }
 
-    private func setupCamera(in scene: SCNScene, framing node: SCNNode) -> SCNNode {
-        let (minVec, maxVec) = node.boundingBox
-        let height = max(CGFloat(maxVec.y - minVec.y), 1)
-        let centerY = CGFloat(maxVec.y + minVec.y) / 2
-
+    /// Feste, konservative Kamera-Position statt Bounding-Box-Berechnung:
+    /// CharMorph-Charaktere stehen lebensgroß (Meter-Maßstab) mit den Füßen nahe Y=0.
+    /// `allowsCameraControl` lässt dich ohnehin frei zoomen/schwenken.
+    private func setupCamera(in scene: SCNScene) -> SCNNode {
         let camera = SCNCamera()
         let cameraNode = SCNNode()
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, Float(centerY), Float(height) * 2.0)
-        cameraNode.look(at: SCNVector3(0, Float(centerY), 0))
+        cameraNode.position = SCNVector3(0, 1.0, 3.2)
+        cameraNode.look(at: SCNVector3(0, 1.0, 0))
         scene.rootNode.addChildNode(cameraNode)
         return cameraNode
     }
