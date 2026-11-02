@@ -7,6 +7,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("Aufgaben", systemImage: "checklist")
                 }
+
+            BodyMetricsView()
+                .tabItem {
+                    Label("Körper", systemImage: "chart.line.uptrend.xyaxis")
+                }
         }
     }
 }
