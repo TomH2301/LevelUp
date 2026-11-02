@@ -69,6 +69,7 @@ jobs:
                 "versionDescription": "Automatischer Dev-Build (Run #${{ github.run_number }})",
                 "downloadURL": "$DOWNLOAD_URL",
                 "localizedDescription": "LevelUp Fitness-RPG (Dev-Build)",
+                "iconURL": "",
                 "size": $SIZE
               }
             ]
