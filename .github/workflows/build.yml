@@ -14,6 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute build version
+        run: echo "VERSION=0.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -33,6 +36,7 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
+            MARKETING_VERSION="$VERSION" \
             clean build
 
       - name: Package as unsigned .ipa
@@ -53,7 +57,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="0.${{ github.run_number }}"
           VERSION_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           SIZE="$(stat -f%z LevelUp.ipa)"
           DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/latest-build/LevelUp.ipa"
