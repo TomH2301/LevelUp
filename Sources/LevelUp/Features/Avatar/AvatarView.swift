@@ -9,14 +9,16 @@ struct AvatarView: View {
     @Query private var sessions: [WorkoutSession]
 
     @State private var scene = SCNScene()
+    @State private var cameraNode: SCNNode?
     @State private var morphNode: SCNNode?
+    @State private var isCalibratingPhoto = false
 
     private var profile: AvatarProfile? { profiles.first }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                SceneView(scene: scene, pointOfView: nil, options: [.allowsCameraControl])
+                SceneView(scene: scene, pointOfView: cameraNode, options: [.allowsCameraControl])
                     .frame(maxHeight: .infinity)
                     .background(Color.black.opacity(0.05))
 
@@ -37,6 +39,21 @@ struct AvatarView: View {
                 }
             }
             .navigationTitle("Avatar")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isCalibratingPhoto = true
+                    } label: {
+                        Image(systemName: "camera.fill")
+                    }
+                }
+            }
+            .sheet(isPresented: $isCalibratingPhoto) {
+                if let profile {
+                    PhotoCalibrationView(profile: profile)
+                        .onDisappear { applySkinTone() }
+                }
+            }
             .task {
                 ensureProfile()
                 loadScene()
@@ -61,16 +78,47 @@ struct AvatarView: View {
             if node.morpher != nil { found = node }
         }
 
-        let light = SCNLight()
-        light.type = .omni
-        let lightNode = SCNNode()
-        lightNode.light = light
-        lightNode.position = SCNVector3(3, 5, 5)
-        loaded.rootNode.addChildNode(lightNode)
+        setupLighting(in: loaded)
+        let camera = setupCamera(in: loaded, framing: found ?? loaded.rootNode)
 
         scene = loaded
         morphNode = found
+        cameraNode = camera
+
         updateMorphWeights()
+        applySkinTone()
+    }
+
+    private func setupLighting(in scene: SCNScene) {
+        let key = SCNLight()
+        key.type = .directional
+        key.intensity = 1100
+        let keyNode = SCNNode()
+        keyNode.light = key
+        keyNode.eulerAngles = SCNVector3(-Float.pi / 4, Float.pi / 4, 0)
+        scene.rootNode.addChildNode(keyNode)
+
+        let ambient = SCNLight()
+        ambient.type = .ambient
+        ambient.intensity = 350
+        ambient.color = UIColor(white: 0.9, alpha: 1)
+        let ambientNode = SCNNode()
+        ambientNode.light = ambient
+        scene.rootNode.addChildNode(ambientNode)
+    }
+
+    private func setupCamera(in scene: SCNScene, framing node: SCNNode) -> SCNNode {
+        let (minVec, maxVec) = node.boundingBox
+        let height = max(CGFloat(maxVec.y - minVec.y), 1)
+        let centerY = CGFloat(maxVec.y + minVec.y) / 2
+
+        let camera = SCNCamera()
+        let cameraNode = SCNNode()
+        cameraNode.camera = camera
+        cameraNode.position = SCNVector3(0, Float(centerY), Float(height) * 2.0)
+        cameraNode.look(at: SCNVector3(0, Float(centerY), 0))
+        scene.rootNode.addChildNode(cameraNode)
+        return cameraNode
     }
 
     private func updateMorphWeights() {
@@ -85,6 +133,11 @@ struct AvatarView: View {
 
         morpher.setWeight(CGFloat(fatWeight), forTargetAt: 0)
         morpher.setWeight(CGFloat(muscleWeight), forTargetAt: 1)
+    }
+
+    private func applySkinTone() {
+        guard let profile, let color = UIColor(hex: profile.skinColorHex) else { return }
+        morphNode?.geometry?.materials.forEach { $0.diffuse.contents = color }
     }
 
     private func normalized(_ value: Double, min minValue: Double, max maxValue: Double) -> Double {

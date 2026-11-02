@@ -12,6 +12,7 @@ enum AvatarGender: String, CaseIterable, Identifiable, Codable {
 final class AvatarProfile {
     var gender: AvatarGender
     var skinColorHex: String
+    var hairColorHex: String
     var minBodyFatPercent: Double
     var maxBodyFatPercent: Double
     var maxStrengthLevel: Int
@@ -19,12 +20,14 @@ final class AvatarProfile {
     init(
         gender: AvatarGender = .female,
         skinColorHex: String = "#D9A77C",
+        hairColorHex: String = "#3B2A20",
         minBodyFatPercent: Double = 8,
         maxBodyFatPercent: Double = 30,
         maxStrengthLevel: Int = 30
     ) {
         self.gender = gender
         self.skinColorHex = skinColorHex
+        self.hairColorHex = hairColorHex
         self.minBodyFatPercent = minBodyFatPercent
         self.maxBodyFatPercent = maxBodyFatPercent
         self.maxStrengthLevel = maxStrengthLevel
