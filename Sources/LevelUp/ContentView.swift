@@ -3,6 +3,11 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         TabView {
+            AvatarView()
+                .tabItem {
+                    Label("Avatar", systemImage: "figure.stand")
+                }
+
             SkillsView()
                 .tabItem {
                     Label("Skills", systemImage: "chart.bar.xaxis")

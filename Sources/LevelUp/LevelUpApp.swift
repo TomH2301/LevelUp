@@ -20,7 +20,8 @@ struct LevelUpApp: App {
             PlanExercise.self,
             WorkoutSession.self,
             SetEntry.self,
-            ActivityLog.self
+            ActivityLog.self,
+            AvatarProfile.self
         ])
     }
 }
