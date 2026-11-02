@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -42,3 +45,42 @@ jobs:
         with:
           name: LevelUp-ipa
           path: LevelUp.ipa
+
+      - name: Publish as AltStore source (für Sideloading ohne Kabel)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="0.${{ github.run_number }}"
+          VERSION_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SIZE="$(stat -f%z LevelUp.ipa)"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/latest-build/LevelUp.ipa"
+
+          cat > source.json <<EOF
+          {
+            "name": "LevelUp Dev Source",
+            "identifier": "de.hemme.levelup.source",
+            "apps": [
+              {
+                "name": "LevelUp",
+                "bundleIdentifier": "de.hemme.levelup",
+                "developerName": "Tom Hemme",
+                "version": "$VERSION",
+                "versionDate": "$VERSION_DATE",
+                "versionDescription": "Automatischer Dev-Build (Run #${{ github.run_number }})",
+                "downloadURL": "$DOWNLOAD_URL",
+                "localizedDescription": "LevelUp Fitness-RPG (Dev-Build)",
+                "size": $SIZE
+              }
+            ]
+          }
+          EOF
+
+          if gh release view latest-build --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload latest-build LevelUp.ipa source.json --repo "${{ github.repository }}" --clobber
+          else
+            gh release create latest-build LevelUp.ipa source.json \
+              --repo "${{ github.repository }}" \
+              --title "Latest Dev Build" \
+              --notes "Wird bei jedem Push automatisch aktualisiert. Source-URL für AltStore: siehe source.json." \
+              --prerelease
+          fi
