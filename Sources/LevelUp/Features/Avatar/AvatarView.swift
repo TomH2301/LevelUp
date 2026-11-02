@@ -107,14 +107,27 @@ struct AvatarView: View {
         let (camera, cameraInfo) = setupCamera(in: loaded, target: found)
 
         let materialCount = found?.geometry?.materials.count ?? -1
-        found?.geometry?.materials.forEach { $0.diffuse.contents = UIColor.red }
+        found?.geometry?.materials.forEach {
+            $0.diffuse.contents = UIColor.red
+            $0.isDoubleSided = true
+        }
+
+        // Prüfen, ob der Node selbst oder ein Vorfahre ausgeblendet ist
+        var hiddenChain: [String] = []
+        var walker: SCNNode? = found
+        while let n = walker {
+            if n.isHidden { hiddenChain.append(n.name ?? "?") }
+            if n.opacity < 1 { hiddenChain.append("\(n.name ?? "?")-opacity:\(n.opacity)") }
+            walker = n.parent
+        }
 
         scene = loaded
         morphNode = found
         cameraNode = camera
 
         let morphInfo = found != nil ? "Morpher: \(found?.morpher?.targets.count ?? 0) Target(s)" : "Kein Morpher gefunden"
-        statusText = "Meshes: \(meshCount) · \(morphInfo) · Materials: \(materialCount) · \(cameraInfo)"
+        let hiddenInfo = hiddenChain.isEmpty ? "nichts ausgeblendet" : "ausgeblendet: \(hiddenChain.joined(separator: ","))"
+        statusText = "Meshes: \(meshCount) · \(morphInfo) · Materials: \(materialCount) · \(hiddenInfo) · \(cameraInfo)"
 
         updateMorphWeights()
     }
