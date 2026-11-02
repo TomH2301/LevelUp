@@ -27,6 +27,13 @@ struct ContentView: View {
                 .tabItem {
                     Label("Workout", systemImage: "play.circle.fill")
                 }
+
+            NavigationStack {
+                MorphSpikeTestView()
+            }
+            .tabItem {
+                Label("Spike", systemImage: "cube.transparent")
+            }
         }
     }
 }
