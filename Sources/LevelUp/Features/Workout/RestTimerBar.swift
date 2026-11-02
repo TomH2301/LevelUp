@@ -1,8 +1,10 @@
 import SwiftUI
 import UserNotifications
+import Combine
 
 struct RestTimerBar: View {
-    @State private var endDate: Date?
+    @State private var remainingSeconds: Int = 0
+    @State private var timerCancellable: AnyCancellable?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -15,20 +17,26 @@ struct RestTimerBar: View {
 
             Spacer()
 
-            if let endDate {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let remaining = max(0, Int(endDate.timeIntervalSince(context.date)))
-                    Text(timeString(remaining))
-                        .font(.body.monospacedDigit())
-                        .foregroundStyle(remaining == 0 ? .secondary : .blue)
-                }
+            if remainingSeconds > 0 {
+                Text(timeString(remainingSeconds))
+                    .font(.body.monospacedDigit())
+                    .foregroundStyle(.blue)
             }
         }
     }
 
     private func start(minutes: Int) {
-        endDate = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        remainingSeconds = minutes * 60
         scheduleNotification(seconds: minutes * 60)
+
+        timerCancellable?.cancel()
+        timerCancellable = Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { _ in
+                if remainingSeconds > 0 {
+                    remainingSeconds -= 1
+                }
+            }
     }
 
     private func timeString(_ seconds: Int) -> String {
