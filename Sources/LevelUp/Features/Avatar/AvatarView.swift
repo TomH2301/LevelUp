@@ -12,6 +12,7 @@ struct AvatarView: View {
     @State private var cameraNode: SCNNode?
     @State private var bodyNode: SCNNode?
     @State private var isCalibratingPhoto = false
+    @State private var isEditingBasicData = false
     @State private var statusText: String = "Lädt…"
 
     private var profile: AvatarProfile? { profiles.first }
@@ -47,6 +48,13 @@ struct AvatarView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
+                        isEditingBasicData = true
+                    } label: {
+                        Image(systemName: "ruler")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
                         isCalibratingPhoto = true
                     } label: {
                         Image(systemName: "camera.fill")
@@ -57,6 +65,12 @@ struct AvatarView: View {
                 if let profile {
                     PhotoCalibrationView(profile: profile)
                         .onDisappear { applySkinTone() }
+                }
+            }
+            .sheet(isPresented: $isEditingBasicData) {
+                if let profile {
+                    BasicDataView(profile: profile)
+                        .onDisappear { updateMorphWeights() }
                 }
             }
             .task {
@@ -155,15 +169,28 @@ struct AvatarView: View {
         return cameraNode
     }
 
+    /// Körperfett kommt von einem echten Messwert, sobald einer existiert — sonst
+    /// aus der Deurenberg-Schätzung (Größe/Gewicht/Alter/Geschlecht). Dasselbe gilt
+    /// fürs Gewicht: geloggter Wert aus dem Körper-Tab schlägt den Onboarding-Fallback.
+    /// Muscular mischt einen Fettfreie-Masse-Proxy (sofort verfügbar) mit dem
+    /// trainingsbasierten Kraft-Level (baut sich über Zeit auf).
     private func updateMorphWeights() {
         guard let profile, let morpher = bodyNode?.morpher, morpher.targets.count >= 2 else { return }
 
-        let kfa = bodyMetrics.first?.bodyFatPercentage ?? profile.minBodyFatPercent
+        let weightKg = bodyMetrics.first?.weightKg ?? profile.fallbackWeightKg
+        let kfa = bodyMetrics.first?.bodyFatPercentage ?? BodyCompositionEstimator.estimatedBodyFatPercent(
+            heightCm: profile.heightCm, weightKg: weightKg, age: profile.age, gender: profile.gender
+        )
         let fatWeight = normalized(kfa, min: profile.minBodyFatPercent, max: profile.maxBodyFatPercent)
+
+        let leanIndex = BodyCompositionEstimator.leanMassIndex(weightKg: weightKg, bodyFatPercent: kfa, heightCm: profile.heightCm)
+        let leanWeight = normalized(leanIndex, min: profile.minLeanMassIndex, max: profile.maxLeanMassIndex)
 
         let strengthXP = SkillXPCalculator.strengthXP(sessions: sessions)
         let strengthLevel = LevelCalculator.level(forXP: strengthXP)
-        let muscleWeight = normalized(Double(strengthLevel), min: 1, max: Double(profile.maxStrengthLevel))
+        let trainingWeight = normalized(Double(strengthLevel), min: 1, max: Double(profile.maxStrengthLevel))
+
+        let muscleWeight = leanWeight * (1 - profile.trainingInfluence) + trainingWeight * profile.trainingInfluence
 
         morpher.setWeight(CGFloat(fatWeight), forTargetAt: 0)
         morpher.setWeight(CGFloat(muscleWeight), forTargetAt: 1)
