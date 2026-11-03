@@ -102,16 +102,20 @@ def bake_from_deltas(result_name, corner_keys, scale):
 
 # "Fat" = high mass, low tone per region. "Muscular" = low mass, high tone.
 # Scale < 1 because summing many overlapping regions (e.g. shoulders + arms
-# near the armpit) at full weight would still over-compound.
-DELTA_SCALE = 0.5
+# near the armpit) at full weight would still over-compound. Muscular gets a
+# higher scale than Fat — CharMorph's "Tone" corner alone reads as fairly
+# subtle at 0.5 (Phase 7.10: tune geometry strength before reaching for
+# texture-based definition).
+FAT_DELTA_SCALE = 0.5
+MUSCULAR_DELTA_SCALE = 0.75
 
 fat_keys = region_corner_keys("max", "min")
 muscular_keys = region_corner_keys("min", "max")
 print(f"Fat corner keys ({len(fat_keys)}): {fat_keys}")
 print(f"Muscular corner keys ({len(muscular_keys)}): {muscular_keys}")
 
-bake_from_deltas("Fat", fat_keys, DELTA_SCALE)
-bake_from_deltas("Muscular", muscular_keys, DELTA_SCALE)
+bake_from_deltas("Fat", fat_keys, FAT_DELTA_SCALE)
+bake_from_deltas("Muscular", muscular_keys, MUSCULAR_DELTA_SCALE)
 
 # --- Strip down to just Basis / Fat / Muscular ---
 keep = {"Basis", "Fat", "Muscular"}
