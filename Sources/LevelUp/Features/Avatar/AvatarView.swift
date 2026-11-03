@@ -10,7 +10,7 @@ struct AvatarView: View {
 
     @State private var scene = SCNScene()
     @State private var cameraNode: SCNNode?
-    @State private var morphNode: SCNNode?
+    @State private var bodyNode: SCNNode?
     @State private var isCalibratingPhoto = false
     @State private var statusText: String = "Lädt…"
 
@@ -21,10 +21,9 @@ struct AvatarView: View {
             VStack(spacing: 0) {
                 SceneView(scene: scene, pointOfView: cameraNode, options: [.allowsCameraControl])
                     .frame(maxHeight: .infinity)
-                    .background(Color.black.opacity(0.05))
 
                 Text(statusText)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
 
@@ -73,113 +72,91 @@ struct AvatarView: View {
         }
     }
 
+    /// Lädt Basis/Fat/Muscular als drei SEPARATE, nicht-skelettgebundene Meshes
+    /// (siehe BlenderAssets/build_character.py) und baut den SCNMorpher selbst
+    /// zusammen, statt ihn aus einer USD-Skelett-Struktur zu übernehmen — die
+    /// hat sich in SceneKit als unzuverlässig erwiesen (Mesh wurde verzerrt).
     private func loadScene() {
         guard let profile else {
             statusText = "Kein Avatar-Profil."
             return
         }
-        let resourceName = profile.gender == .female ? "LevelUp_Female" : "LevelUp_Male"
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "usdz") else {
-            statusText = "Datei \(resourceName).usdz nicht im App-Bundle gefunden."
+        let prefix = profile.gender == .female ? "LevelUp_Female" : "LevelUp_Male"
+
+        guard let baseGeometry = loadGeometry(named: "\(prefix)_Basis"),
+              let fatGeometry = loadGeometry(named: "\(prefix)_Fat"),
+              let muscularGeometry = loadGeometry(named: "\(prefix)_Muscular") else {
+            statusText = "Konnte eine der drei \(prefix)-Dateien nicht laden."
             return
         }
 
-        let loaded: SCNScene
-        do {
-            loaded = try SCNScene(url: url)
-        } catch {
-            statusText = "SCNScene-Ladefehler: \(error.localizedDescription)"
-            return
-        }
+        let morpher = SCNMorpher()
+        morpher.targets = [fatGeometry, muscularGeometry]
+        morpher.calculationMode = .normalized
 
-        var found: SCNNode?
-        var meshCount = 0
-        loaded.rootNode.enumerateHierarchy { node, _ in
-            if node.geometry != nil { meshCount += 1 }
-            if node.morpher != nil { found = node }
-        }
+        let node = SCNNode(geometry: baseGeometry)
+        node.morpher = morpher
 
-        // TEMPORÄR fürs Debugging: dunkler Hintergrund + einfaches Licht + knallrotes
-        // Material, um zu sehen, ob überhaupt eine Silhouette gerendert wird.
-        loaded.background.contents = UIColor.darkGray
+        let newScene = SCNScene()
+        newScene.rootNode.addChildNode(node)
+        setupLighting(in: newScene)
+        let camera = setupCamera(in: newScene, target: node)
 
-        setupLighting(in: loaded)
-        let (camera, cameraInfo) = setupCamera(in: loaded, target: found)
-
-        let materialCount = found?.geometry?.materials.count ?? -1
-        // Komplett ersetzen statt Eigenschaften zu überschreiben — eliminiert jede
-        // geerbte Transparenz-/Blend-Eigenschaft aus dem USD-Import als Fehlerquelle.
-        let freshMaterial = SCNMaterial()
-        freshMaterial.lightingModel = .lambert
-        freshMaterial.diffuse.contents = UIColor.red
-        freshMaterial.isDoubleSided = true
-        freshMaterial.transparency = 1.0
-        freshMaterial.blendMode = .replace
-        if let geometry = found?.geometry {
-            geometry.materials = [freshMaterial]
-        }
-
-        // Prüfen, ob der Node selbst oder ein Vorfahre ausgeblendet ist
-        var hiddenChain: [String] = []
-        var walker: SCNNode? = found
-        while let n = walker {
-            if n.isHidden { hiddenChain.append(n.name ?? "?") }
-            if n.opacity < 1 { hiddenChain.append("\(n.name ?? "?")-opacity:\(n.opacity)") }
-            walker = n.parent
-        }
-
-        scene = loaded
-        morphNode = found
+        scene = newScene
+        bodyNode = node
         cameraNode = camera
-
-        let morphInfo = found != nil ? "Morpher: \(found?.morpher?.targets.count ?? 0) Target(s)" : "Kein Morpher gefunden"
-        let hiddenInfo = hiddenChain.isEmpty ? "nichts ausgeblendet" : "ausgeblendet: \(hiddenChain.joined(separator: ","))"
-        statusText = "Meshes: \(meshCount) · \(morphInfo) · Materials: \(materialCount) · \(hiddenInfo) · \(cameraInfo)"
+        statusText = "Vertices: \(baseGeometry.sources.first?.vectorCount ?? 0)"
 
         updateMorphWeights()
+        applySkinTone()
+    }
+
+    private func loadGeometry(named name: String) -> SCNGeometry? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "usdz"),
+              let loaded = try? SCNScene(url: url) else { return nil }
+        var geometry: SCNGeometry?
+        loaded.rootNode.enumerateHierarchy { node, _ in
+            if geometry == nil, let g = node.geometry {
+                geometry = g
+            }
+        }
+        return geometry
     }
 
     private func setupLighting(in scene: SCNScene) {
-        let light = SCNLight()
-        light.type = .omni
-        let lightNode = SCNNode()
-        lightNode.light = light
-        lightNode.position = SCNVector3(0, 2, 5)
-        scene.rootNode.addChildNode(lightNode)
+        let key = SCNLight()
+        key.type = .directional
+        key.intensity = 1000
+        let keyNode = SCNNode()
+        keyNode.light = key
+        keyNode.eulerAngles = SCNVector3(-Float.pi / 5, Float.pi / 4, 0)
+        scene.rootNode.addChildNode(keyNode)
+
+        let ambient = SCNLight()
+        ambient.type = .ambient
+        ambient.intensity = 400
+        let ambientNode = SCNNode()
+        ambientNode.light = ambient
+        scene.rootNode.addChildNode(ambientNode)
     }
 
-    /// Kamera-Distanz aus der tatsächlichen Bounding-Sphere des Ziel-Nodes berechnet
-    /// (skalierungsunabhängig) statt aus einer angenommenen "Meter"-Größe, die sich
-    /// beim Export als falsch herausgestellt hat.
-    private func setupCamera(in scene: SCNScene, target: SCNNode?) -> (SCNNode, String) {
+    private func setupCamera(in scene: SCNScene, target: SCNNode) -> SCNNode {
         let camera = SCNCamera()
         let cameraNode = SCNNode()
         cameraNode.camera = camera
 
-        guard let target else {
-            cameraNode.position = SCNVector3(0, 1, 3)
-            cameraNode.look(at: SCNVector3(0, 1, 0))
-            scene.rootNode.addChildNode(cameraNode)
-            return (cameraNode, "kein Ziel-Node für Kamera")
-        }
-
         let (localCenter, radius) = target.boundingSphere
         let worldCenter = target.convertPosition(localCenter, to: nil)
-        let distance = max(radius * 3, 0.01)
+        let distance = max(radius * 2.6, 0.5)
 
         cameraNode.position = SCNVector3(worldCenter.x, worldCenter.y, worldCenter.z + distance)
         cameraNode.look(at: worldCenter)
         scene.rootNode.addChildNode(cameraNode)
-
-        let info = String(
-            format: "center=(%.3f, %.3f, %.3f) radius=%.4f",
-            worldCenter.x, worldCenter.y, worldCenter.z, radius
-        )
-        return (cameraNode, info)
+        return cameraNode
     }
 
     private func updateMorphWeights() {
-        guard let profile, let morpher = morphNode?.morpher, morpher.targets.count >= 2 else { return }
+        guard let profile, let morpher = bodyNode?.morpher, morpher.targets.count >= 2 else { return }
 
         let kfa = bodyMetrics.first?.bodyFatPercentage ?? profile.minBodyFatPercent
         let fatWeight = normalized(kfa, min: profile.minBodyFatPercent, max: profile.maxBodyFatPercent)
@@ -194,7 +171,11 @@ struct AvatarView: View {
 
     private func applySkinTone() {
         guard let profile, let color = UIColor(hex: profile.skinColorHex) else { return }
-        morphNode?.geometry?.materials.forEach { $0.diffuse.contents = color }
+        let material = SCNMaterial()
+        material.lightingModel = .lambert
+        material.diffuse.contents = color
+        material.isDoubleSided = true
+        bodyNode?.geometry?.materials = [material]
     }
 
     private func normalized(_ value: Double, min minValue: Double, max maxValue: Double) -> Double {

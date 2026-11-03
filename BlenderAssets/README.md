@@ -1,11 +1,17 @@
 # Avatar-Charaktere (Phase 7, Option B)
 
-`build_character.py` erzeugt aus einem [CharMorph](https://github.com/Upliner/CharMorph)-Basis-Charakter einen reduzierten, exportfähigen Charakter mit genau zwei Blendshapes:
+`build_character.py` erzeugt aus einem [CharMorph](https://github.com/Upliner/CharMorph)-Basis-Charakter **drei separate, nicht-skelettgebundene** Meshes: `<Name>_Basis.usdz`, `<Name>_Fat.usdz`, `<Name>_Muscular.usdz`.
 
-- **Fat** — alle `*Mass`-Morphs (Bauch, Arme, Beine, …) auf Maximum gebacken
-- **Muscular** — alle `*Tone`-Morphs auf Maximum gebacken
+## Warum drei Dateien statt einer mit Shape Keys?
 
-Alle übrigen ~1300 granularen CharMorph-Rohmorphs werden nach dem Backen gelöscht, sodass am Ende genau 3 Shape Keys übrig bleiben: `Basis`, `Fat`, `Muscular` — das ist exakt, was SceneKits `SCNMorpher` als zwei unabhängige Morph-Targets lädt.
+Ursprünglich wurde ein einziges USDZ mit eingebauten Shape Keys exportiert (Blenders übliche Methode). Das scheiterte in zwei Schritten, beide inzwischen gefunden und dokumentiert:
+
+1. **Blender exportiert Shape Keys immer über ein `UsdSkel`-Skelett**, selbst ohne echte Armature. Apples SceneKit-USD-Importer interpretiert diese Skelett-Bindung fehlerhaft und verzerrt das Mesh massiv beim Rendern (bestätigt: Blender selbst zeigt den Export korrekt, SceneKit zeigt eine kollabierte/verzerrte Form). → Lösung: komplett skelettfreie, statische Meshes exportieren, Morphing selbst in SceneKit-Code zusammenbauen (`SCNMorpher.targets` programmatisch gesetzt, siehe `AvatarView.swift`).
+2. **`bpy.ops.object.shape_key_add(from_mix=True)` backt im `--background`-Modus falsche (kollabierte) Geometrie** — unabhängig davon, welche Morph-Werte tatsächlich gesetzt sind (reproduziert sogar mit komplett zurückgesetzten Reglern). Die einzelnen rohen CharMorph-Shape-Keys selbst sind nachweislich korrekt. → Lösung: `Fat`/`Muscular` werden selbst per NumPy aus den Vertex-Deltas der rohen Einzel-Shape-Keys berechnet (`bake_from_deltas()` in `build_character.py`), `from_mix` wird gar nicht mehr benutzt.
+
+## Wie „Fat"/„Muscular" berechnet werden
+
+Für jede Körperregion (Bauch, Arme, Beine, Schultern, …) gibt es bei CharMorph einen 2-achsigen „Mass/Tone"-Kombi-Morph mit vier Eckpunkt-Shape-Keys (`max-max`, `max-min`, `min-max`, `min-min`). `build_character.py` nimmt für **Fat** die `_max-min`-Ecke (viel Masse, wenig Tonus) jeder Region, für **Muscular** die `_min-max`-Ecke (wenig Masse, viel Tonus), summiert die Vertex-Deltas aller Regionen relativ zu `Basis` auf (mit `DELTA_SCALE = 0.5`, um Überlagerungen zwischen benachbarten Regionen abzumildern) und schreibt das Ergebnis direkt in einen neuen, sauberen Shape Key.
 
 ## Einmaliges Setup (bereits erledigt, hier nur zur Doku)
 
@@ -16,22 +22,22 @@ Alle übrigen ~1300 granularen CharMorph-Rohmorphs werden nach dem Backen gelös
 ## Charaktere neu erzeugen
 
 ```
-blender --background --python build_character.py -- mb_female LevelUp_Female.usdz
-blender --background --python build_character.py -- mb_male   LevelUp_Male.usdz
+blender --background --python build_character.py -- mb_female LevelUp_Female
+blender --background --python build_character.py -- mb_male   LevelUp_Male
 ```
 
-Ergebnis-Dateien danach nach `Sources/LevelUp/Resources/` kopieren.
+Erzeugt `LevelUp_Female_Basis.usdz`, `_Fat.usdz`, `_Muscular.usdz` (und analog für Male). Alle sechs Dateien danach nach `Sources/LevelUp/Resources/` kopieren.
 
 ## Vor jedem iOS-Push: lokal in Blender verifizieren
 
-`render_check.py` importiert eine exportierte `.usdz` zurück und rendert einen Screenshot — in Sekunden, statt 10+ Minuten CI+AltStore-Zyklus:
+`render_check.py` importiert eine exportierte `.usdz` zurück und rendert einen Screenshot mit Workbench-Solid-Shading (zeigt Normalen-/Schattierungsfehler zuverlässig, anders als ein dunkel beleuchteter EEVEE-Render):
 
 ```
-blender --background --python render_check.py -- "<Pfad>\LevelUp_Female.usdz" "<Pfad>\check.png"
+blender --background --python render_check.py -- "<Pfad>\LevelUp_Female_Fat.usdz" "<Pfad>\check.png"
 ```
 
-Prüft: lädt das Mesh, stimmen Vertex-Zahl/Shape-Keys, ist eine plausible Silhouette sichtbar. Das sagt nichts über SceneKit-spezifisches Verhalten (Materialien, Skinning-Interpretation) aus, grenzt aber Export-Probleme von App-seitigen Problemen zuverlässig ab, bevor überhaupt gepusht wird.
+Das prüft Export-Korrektheit (Topologie, Normalen, plausible Silhouette), aber **nicht** SceneKit-spezifisches Verhalten — dafür bleibt der eigentliche Geräte-Test nötig.
 
 ## SpikeTest/
 
-Der ursprüngliche Validierungs-Test (Kugel mit einem Shape Key), mit dem der Export-Pfad Blender → USDZ → SceneKit `SCNMorpher` bestätigt wurde, bevor der echte Charakter gebaut wurde.
+Der ursprüngliche Validierungs-Test (Kugel mit einem Shape Key), mit dem der grundsätzliche Export-Pfad Blender → USDZ → SceneKit `SCNMorpher` bestätigt wurde, bevor der echte Charakter gebaut wurde.
