@@ -107,7 +107,7 @@ def bake_from_deltas(result_name, corner_keys, scale):
 # subtle at 0.5 (Phase 7.10: tune geometry strength before reaching for
 # texture-based definition).
 FAT_DELTA_SCALE = 0.5
-MUSCULAR_DELTA_SCALE = 0.75
+MUSCULAR_DELTA_SCALE = 1.5
 
 fat_keys = region_corner_keys("max", "min")
 muscular_keys = region_corner_keys("min", "max")
@@ -257,6 +257,13 @@ def export_shape_as_static(source_obj, key_name, out_path):
         new_obj.shape_key_remove(kb)
 
     new_mesh.vertices.foreach_set("co", coords)
+
+    # Explicit smooth shading: without this, exported normals can end up
+    # flat/per-face, rendering as a faceted "low-poly" look in SceneKit even
+    # though the source mesh (and Blender's own preview) looks smooth.
+    for poly in new_mesh.polygons:
+        poly.use_smooth = True
+
     new_mesh.update()
 
     bpy.ops.object.select_all(action="DESELECT")

@@ -6,7 +6,6 @@ struct AvatarView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var profiles: [AvatarProfile]
     @Query(sort: \BodyMetricEntry.date, order: .reverse) private var bodyMetrics: [BodyMetricEntry]
-    @Query private var sessions: [WorkoutSession]
 
     @State private var scene = SCNScene()
     @State private var cameraNode: SCNNode?
@@ -15,7 +14,6 @@ struct AvatarView: View {
     @State private var hairNode: SCNNode?
     @State private var isCalibratingPhoto = false
     @State private var isEditingBasicData = false
-    @State private var isEditingCalibration = false
     @State private var statusText: String = "Lädt…"
 
     private var profile: AvatarProfile? { profiles.first }
@@ -63,13 +61,6 @@ struct AvatarView: View {
                         Image(systemName: "camera.fill")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        isEditingCalibration = true
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                    }
-                }
             }
             .sheet(isPresented: $isCalibratingPhoto) {
                 if let profile {
@@ -83,12 +74,6 @@ struct AvatarView: View {
             .sheet(isPresented: $isEditingBasicData) {
                 if let profile {
                     BasicDataView(profile: profile)
-                        .onDisappear { updateMorphWeights() }
-                }
-            }
-            .sheet(isPresented: $isEditingCalibration) {
-                if let profile {
-                    AvatarCalibrationView(profile: profile)
                         .onDisappear { updateMorphWeights() }
                 }
             }
@@ -162,7 +147,11 @@ struct AvatarView: View {
 
         let morpher = SCNMorpher()
         morpher.targets = targets
-        morpher.calculationMode = .normalized
+        // .additive, not .normalized: Fat/Muscular/FaceWide are independent,
+        // stackable axes. In .normalized mode they competed for a shared
+        // weight budget — increasing KFA visibly shrank the Muscular
+        // contribution and the figure looked THINNER as fat went up.
+        morpher.calculationMode = .additive
 
         let node = SCNNode(geometry: baseGeometry)
         node.morpher = morpher
@@ -213,13 +202,13 @@ struct AvatarView: View {
         return cameraNode
     }
 
-    /// Körperfett kommt von einem echten Messwert, sobald einer existiert — sonst
-    /// aus der Deurenberg-Schätzung (Größe/Gewicht/Alter/Geschlecht). Dasselbe gilt
-    /// fürs Gewicht: geloggter Wert aus dem Körper-Tab schlägt den Onboarding-Fallback.
-    /// Muscular mischt einen Fettfreie-Masse-Proxy (sofort verfügbar) mit dem
-    /// trainingsbasierten Kraft-Level (baut sich über Zeit auf). Dieselben beiden
-    /// Gewichte gelten für Körper, Unterwäsche und Haare gleichermaßen, damit alle
-    /// drei Teile synchron mitwachsen.
+    /// Beide Achsen sind rein aus deinen echten Körperdaten abgeleitet — nicht
+    /// manuell einstellbar. Körperfett kommt von einem echten Messwert, sobald
+    /// einer existiert, sonst aus der Deurenberg-Schätzung (Größe/Gewicht/
+    /// Alter/Geschlecht). Muscular kommt direkt aus der daraus berechneten
+    /// fettfreien Masse (Gewicht × (1 − KFA/100), auf die Größe normalisiert)
+    /// — kein Kraft-Level, keine manuelle Mischung. Dieselben Gewichte gelten
+    /// für Körper, Unterwäsche und Haare, damit alle drei synchron mitwachsen.
     private func updateMorphWeights() {
         guard let profile else { return }
 
@@ -227,16 +216,10 @@ struct AvatarView: View {
         let kfa = bodyMetrics.first?.bodyFatPercentage ?? BodyCompositionEstimator.estimatedBodyFatPercent(
             heightCm: profile.heightCm, weightKg: weightKg, age: profile.age, gender: profile.gender
         )
-        let fatWeight = normalized(kfa, min: profile.minBodyFatPercent, max: profile.maxBodyFatPercent)
+        let fatWeight = normalized(kfa, min: 6, max: 35)
 
         let leanIndex = BodyCompositionEstimator.leanMassIndex(weightKg: weightKg, bodyFatPercent: kfa, heightCm: profile.heightCm)
-        let leanWeight = normalized(leanIndex, min: profile.minLeanMassIndex, max: profile.maxLeanMassIndex)
-
-        let strengthXP = SkillXPCalculator.strengthXP(sessions: sessions)
-        let strengthLevel = LevelCalculator.level(forXP: strengthXP)
-        let trainingWeight = normalized(Double(strengthLevel), min: 1, max: Double(profile.maxStrengthLevel))
-
-        let muscleWeight = leanWeight * (1 - profile.trainingInfluence) + trainingWeight * profile.trainingInfluence
+        let muscleWeight = normalized(leanIndex, min: 16, max: 26)
 
         for node in [bodyNode, underwearNode, hairNode] {
             guard let morpher = node?.morpher, morpher.targets.count >= 2 else { continue }

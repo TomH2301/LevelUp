@@ -21,7 +21,19 @@ Ein viertes, körperweites Shape-Target `FaceWide` wird zusätzlich gebacken, di
 
 ## Wie „Fat"/„Muscular" berechnet werden
 
-Für jede Körperregion (Bauch, Arme, Beine, Schultern, …) gibt es bei CharMorph einen 2-achsigen „Mass/Tone"-Kombi-Morph mit vier Eckpunkt-Shape-Keys (`max-max`, `max-min`, `min-max`, `min-min`). `build_character.py` nimmt für **Fat** die `_max-min`-Ecke (viel Masse, wenig Tonus) jeder Region, für **Muscular** die `_min-max`-Ecke (wenig Masse, viel Tonus), summiert die Vertex-Deltas aller Regionen relativ zu `Basis` auf (mit `DELTA_SCALE = 0.5`, um Überlagerungen zwischen benachbarten Regionen abzumildern) und schreibt das Ergebnis direkt in einen neuen, sauberen Shape Key.
+Für jede Körperregion (Bauch, Arme, Beine, Schultern, …) gibt es bei CharMorph einen 2-achsigen „Mass/Tone"-Kombi-Morph mit vier Eckpunkt-Shape-Keys (`max-max`, `max-min`, `min-max`, `min-min`). `build_character.py` nimmt für **Fat** die `_max-min`-Ecke (viel Masse, wenig Tonus) jeder Region, für **Muscular** die `_min-max`-Ecke (wenig Masse, viel Tonus), summiert die Vertex-Deltas aller Regionen relativ zu `Basis` auf (mit `DELTA_SCALE`, um Überlagerungen zwischen benachbarten Regionen abzumildern) und schreibt das Ergebnis direkt in einen neuen, sauberen Shape Key.
+
+**`MUSCULAR_DELTA_SCALE` auf 1.5 erhöht (war 0.75):** Bei 0.75 war der Muskel-Effekt neben dem viel dramatischeren Fat-Effekt (0.5) praktisch unsichtbar — CharMorphs rohe „Tone"-Ecke ist an sich sehr subtil. Bei 2.2 wurde Brust/Bauch/Arme klar sichtbar definiert, aber im Becken-/Leistenbereich entstand eine sichtbare Verzerrung (vermutlich Überlagerung der Gluteus-Region-Deltas bei zu hoher Skalierung). 1.5 ist der per lokalem `render_combined_check.py`-Vergleich bestätigte Sweet Spot: deutlich sichtbare Definition (Schultern, Bauch, Arme, Beine) ohne Geometrie-Artefakte.
+
+## Runtime-Morphing: additive statt normalized, keine manuelle Kalibrierung
+
+**Bug gefunden &amp; gefixt (Phase 7.12):** `SCNMorpher.calculationMode` stand auf `.normalized` — dabei konkurrieren alle Targets (Fat/Muscular/FaceWide) um ein gemeinsames Gewichts-Budget. Folge: ein höherer KFA-Wert (mehr Fat-Gewicht) drückte automatisch das Muscular-Gewicht herunter, die Figur wurde beim Zunehmen sichtbar *dünner* statt dicker, und Muscular ließ sich kaum spürbar erhöhen. Fix: `.additive` — Fat und Muscular sind unabhängige, stapelbare Achsen und müssen sich nicht um ein Budget streiten (siehe `AvatarView.swift`, `loadBodyPart`).
+
+**Manuelle Kalibrierungs-UI entfernt:** Es gab eine Einstellungsansicht (`AvatarCalibrationView`), mit der man Fat/Muscular-Gewichtsgrenzen und eine Kraft-Level-Mischung von Hand einstellen konnte. Explizit unerwünscht — der Avatar soll sich ausschließlich aus echten Körperdaten ableiten, nicht aus manueller Einstellung. Entfernt: die View-Datei, der Kamera-Toolbar-Button, das Sheet, sowie die `trainingInfluence`-Kraft-Level-Mischung in `updateMorphWeights()`. Die Gewichts-Normalisierungsgrenzen (KFA 6–35%, Lean-Mass-Index 16–26) sind jetzt feste Konstanten in `AvatarView.swift` statt einstellbarer `AvatarProfile`-Felder.
+
+## Smooth Shading beim Export
+
+**Bug gefunden &amp; gefixt:** Die exportierten statischen Meshes sahen in SceneKit „Minecraft-artig" aus — blockig, ohne weiche Konturen — obwohl Blenders eigene Workbench-Vorschau glatt aussah. Ursache: `export_shape_as_static()` baut pro Shape-Key ein komplett neues `bpy.data.meshes.new(...)`-Objekt aus rohen Vertex-Koordinaten; dabei wird das `use_smooth`-Flag der Polygone nicht automatisch gesetzt (Default ist flach). Fix: nach `foreach_set("co", ...)` wird für jedes Polygon `poly.use_smooth = True` gesetzt, bevor exportiert wird.
 
 ## Einmaliges Setup (bereits erledigt, hier nur zur Doku)
 
