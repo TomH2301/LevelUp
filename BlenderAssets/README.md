@@ -22,6 +22,16 @@ blender --background --python build_character.py -- mb_male   LevelUp_Male.usdz
 
 Ergebnis-Dateien danach nach `Sources/LevelUp/Resources/` kopieren.
 
+## Vor jedem iOS-Push: lokal in Blender verifizieren
+
+`render_check.py` importiert eine exportierte `.usdz` zurück und rendert einen Screenshot — in Sekunden, statt 10+ Minuten CI+AltStore-Zyklus:
+
+```
+blender --background --python render_check.py -- "<Pfad>\LevelUp_Female.usdz" "<Pfad>\check.png"
+```
+
+Prüft: lädt das Mesh, stimmen Vertex-Zahl/Shape-Keys, ist eine plausible Silhouette sichtbar. Das sagt nichts über SceneKit-spezifisches Verhalten (Materialien, Skinning-Interpretation) aus, grenzt aber Export-Probleme von App-seitigen Problemen zuverlässig ab, bevor überhaupt gepusht wird.
+
 ## SpikeTest/
 
 Der ursprüngliche Validierungs-Test (Kugel mit einem Shape Key), mit dem der Export-Pfad Blender → USDZ → SceneKit `SCNMorpher` bestätigt wurde, bevor der echte Charakter gebaut wurde.

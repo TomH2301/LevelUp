@@ -107,9 +107,16 @@ struct AvatarView: View {
         let (camera, cameraInfo) = setupCamera(in: loaded, target: found)
 
         let materialCount = found?.geometry?.materials.count ?? -1
-        found?.geometry?.materials.forEach {
-            $0.diffuse.contents = UIColor.red
-            $0.isDoubleSided = true
+        // Komplett ersetzen statt Eigenschaften zu überschreiben — eliminiert jede
+        // geerbte Transparenz-/Blend-Eigenschaft aus dem USD-Import als Fehlerquelle.
+        let freshMaterial = SCNMaterial()
+        freshMaterial.lightingModel = .lambert
+        freshMaterial.diffuse.contents = UIColor.red
+        freshMaterial.isDoubleSided = true
+        freshMaterial.transparency = 1.0
+        freshMaterial.blendMode = .replace
+        if let geometry = found?.geometry {
+            geometry.materials = [freshMaterial]
         }
 
         // Prüfen, ob der Node selbst oder ein Vorfahre ausgeblendet ist
