@@ -15,6 +15,7 @@ struct AvatarView: View {
     @State private var hairNode: SCNNode?
     @State private var isCalibratingPhoto = false
     @State private var isEditingBasicData = false
+    @State private var isEditingCalibration = false
     @State private var statusText: String = "Lädt…"
 
     private var profile: AvatarProfile? { profiles.first }
@@ -62,6 +63,13 @@ struct AvatarView: View {
                         Image(systemName: "camera.fill")
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isEditingCalibration = true
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                }
             }
             .sheet(isPresented: $isCalibratingPhoto) {
                 if let profile {
@@ -72,6 +80,12 @@ struct AvatarView: View {
             .sheet(isPresented: $isEditingBasicData) {
                 if let profile {
                     BasicDataView(profile: profile)
+                        .onDisappear { updateMorphWeights() }
+                }
+            }
+            .sheet(isPresented: $isEditingCalibration) {
+                if let profile {
+                    AvatarCalibrationView(profile: profile)
                         .onDisappear { updateMorphWeights() }
                 }
             }
