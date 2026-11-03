@@ -81,6 +81,9 @@ print("Final shape keys:", [k.name for k in obj.data.shape_keys.key_blocks])
 # (SceneKit's USD importer is far less complete than Blender's/Pixar's reference
 # implementation; CharMorph exports ~10 materials + many per-ethnicity mask
 # primvars that may be too much for it to parse reliably.)
+print("Attributes BEFORE cleanup:", [(a.name, a.data_type, a.domain) for a in obj.data.attributes])
+print("UV layers BEFORE cleanup:", [uv.name for uv in obj.data.uv_layers])
+
 first_material = obj.data.materials[0] if obj.data.materials else None
 obj.data.materials.clear()
 if first_material:
@@ -89,13 +92,17 @@ if first_material:
 while len(obj.data.uv_layers) > 1:
     obj.data.uv_layers.remove(obj.data.uv_layers[-1])
 
+# Nur bekannte CharMorph-Masken-/Textur-Zusatzattribute entfernen, statt
+# pauschal alles außer einer festen Namensliste zu löschen (hat zuvor
+# versehentlich Normalen-/Topologiedaten mit erwischt und zu kaputter
+# Schattierung geführt).
+junk_prefixes = ("hair_", "Eyes_", "L2_", "L1_", "charmorph_")
 for attr in list(obj.data.attributes):
-    if attr.name in ("position", "normal", obj.data.uv_layers[0].name if obj.data.uv_layers else ""):
-        continue
-    try:
-        obj.data.attributes.remove(attr)
-    except RuntimeError:
-        pass
+    if attr.name.startswith(junk_prefixes):
+        try:
+            obj.data.attributes.remove(attr)
+        except RuntimeError:
+            pass
 
 print("Materials after cleanup:", [m.name for m in obj.data.materials])
 print("UV layers after cleanup:", [uv.name for uv in obj.data.uv_layers])

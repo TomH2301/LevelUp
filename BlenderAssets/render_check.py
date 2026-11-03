@@ -26,6 +26,15 @@ else:
     print(f"Mesh: {mesh_obj.name}, verts: {len(mesh_obj.data.vertices)}")
     print(f"Shape keys: {[b.name for b in mesh_obj.data.shape_keys.key_blocks] if mesh_obj.data.shape_keys else None}")
 
+    # Einfaches, garantiert diffus reagierendes Debug-Material statt des
+    # importierten PBR-Materials (das ohne HDRI/Umgebungslicht kaum Licht reflektiert).
+    debug_mat = bpy.data.materials.new("DebugMat")
+    debug_mat.diffuse_color = (0.8, 0.2, 0.2, 1.0)
+    debug_mat.use_nodes = False
+    mesh_obj.data.materials.clear()
+    mesh_obj.data.materials.append(debug_mat)
+    bpy.context.scene.render.engine = "BLENDER_WORKBENCH"
+
     min_co = [1e9, 1e9, 1e9]
     max_co = [-1e9, -1e9, -1e9]
     for obj in bpy.context.scene.objects:
@@ -51,12 +60,23 @@ else:
     bpy.context.scene.camera = cam_obj
 
     light_data = bpy.data.lights.new("DebugSun", type="SUN")
-    light_data.energy = 3
+    light_data.energy = 5
     light_obj = bpy.data.objects.new("DebugSun", light_data)
     bpy.context.collection.objects.link(light_obj)
-    light_obj.location = (center[0], center[1] - dist, center[2] + dist)
+    light_obj.location = (center[0] - dist * 0.5, center[1] - dist, center[2] + dist * 0.5)
+    # Sun shines along local -Z; point it at the character, same trick as the camera.
+    light_dir = mathutils.Vector(center) - mathutils.Vector(light_obj.location)
+    light_obj.rotation_euler = light_dir.to_track_quat('-Z', 'Y').to_euler()
 
-    bpy.context.scene.render.engine = "BLENDER_EEVEE"
+    fill_data = bpy.data.lights.new("DebugFill", type="SUN")
+    fill_data.energy = 2
+    fill_obj = bpy.data.objects.new("DebugFill", fill_data)
+    bpy.context.collection.objects.link(fill_obj)
+    fill_obj.location = (center[0] + dist * 0.5, center[1] - dist, center[2])
+    fill_dir = mathutils.Vector(center) - mathutils.Vector(fill_obj.location)
+    fill_obj.rotation_euler = fill_dir.to_track_quat('-Z', 'Y').to_euler()
+
+    bpy.context.scene.view_settings.view_transform = 'Standard'
     bpy.context.scene.render.resolution_x = 800
     bpy.context.scene.render.resolution_y = 800
     bpy.context.scene.render.filepath = out_png
