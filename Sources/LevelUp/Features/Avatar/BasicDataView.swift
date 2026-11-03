@@ -11,7 +11,7 @@ struct BasicDataView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Grunddaten") {
+                Section {
                     HStack {
                         Text("Größe")
                         Spacer()
@@ -39,6 +39,8 @@ struct BasicDataView: View {
                             .frame(width: 70)
                         Text("Jahre").foregroundStyle(.secondary)
                     }
+                } header: {
+                    Text("Grunddaten")
                 } footer: {
                     Text("Daraus wird dein Avatar-Startzustand geschätzt (Körperfett, Muskelmasse), solange noch keine eigenen Mess- oder Trainingswerte vorliegen. Das Gewicht hier zählt nur, bis du den ersten Eintrag im Körper-Tab anlegst — danach übernimmt der.")
                 }
