@@ -11,6 +11,8 @@ struct AvatarView: View {
     @State private var scene = SCNScene()
     @State private var cameraNode: SCNNode?
     @State private var bodyNode: SCNNode?
+    @State private var underwearNode: SCNNode?
+    @State private var hairNode: SCNNode?
     @State private var isCalibratingPhoto = false
     @State private var isEditingBasicData = false
     @State private var statusText: String = "Lädt…"
@@ -64,7 +66,7 @@ struct AvatarView: View {
             .sheet(isPresented: $isCalibratingPhoto) {
                 if let profile {
                     PhotoCalibrationView(profile: profile)
-                        .onDisappear { applySkinTone() }
+                        .onDisappear { applyMaterials() }
                 }
             }
             .sheet(isPresented: $isEditingBasicData) {
@@ -86,10 +88,11 @@ struct AvatarView: View {
         }
     }
 
-    /// Lädt Basis/Fat/Muscular als drei SEPARATE, nicht-skelettgebundene Meshes
-    /// (siehe BlenderAssets/build_character.py) und baut den SCNMorpher selbst
-    /// zusammen, statt ihn aus einer USD-Skelett-Struktur zu übernehmen — die
-    /// hat sich in SceneKit als unzuverlässig erwiesen (Mesh wurde verzerrt).
+    /// Lädt Körper, Unterwäsche und Haare je als drei SEPARATE, nicht-skelett-
+    /// gebundene Meshes (siehe BlenderAssets/build_character.py) und baut für
+    /// jeden Teil einen eigenen SCNMorpher selbst zusammen, statt ihn aus einer
+    /// USD-Skelett-Struktur zu übernehmen — die hat sich in SceneKit als
+    /// unzuverlässig erwiesen (Mesh wurde verzerrt).
     private func loadScene() {
         guard let profile else {
             statusText = "Kein Avatar-Profil."
@@ -97,11 +100,38 @@ struct AvatarView: View {
         }
         let prefix = profile.gender == .female ? "LevelUp_Female" : "LevelUp_Male"
 
+        guard let body = loadBodyPart(prefix: prefix),
+              let underwear = loadBodyPart(prefix: "\(prefix)_Underwear"),
+              let hair = loadBodyPart(prefix: "\(prefix)_Hair") else {
+            statusText = "Konnte eine der \(prefix)-Dateien nicht laden."
+            return
+        }
+
+        let newScene = SCNScene()
+        newScene.rootNode.addChildNode(body)
+        newScene.rootNode.addChildNode(underwear)
+        newScene.rootNode.addChildNode(hair)
+        setupLighting(in: newScene)
+        let camera = setupCamera(in: newScene, target: body)
+
+        scene = newScene
+        bodyNode = body
+        underwearNode = underwear
+        hairNode = hair
+        cameraNode = camera
+        statusText = "Vertices: \(body.geometry?.sources.first?.vectorCount ?? 0)"
+
+        updateMorphWeights()
+        applyMaterials()
+    }
+
+    /// Lädt Basis/Fat/Muscular für einen Körperteil und baut daraus einen Node
+    /// mit eigenem Morpher (2 Targets: Fat, Muscular).
+    private func loadBodyPart(prefix: String) -> SCNNode? {
         guard let baseGeometry = loadGeometry(named: "\(prefix)_Basis"),
               let fatGeometry = loadGeometry(named: "\(prefix)_Fat"),
               let muscularGeometry = loadGeometry(named: "\(prefix)_Muscular") else {
-            statusText = "Konnte eine der drei \(prefix)-Dateien nicht laden."
-            return
+            return nil
         }
 
         let morpher = SCNMorpher()
@@ -110,19 +140,7 @@ struct AvatarView: View {
 
         let node = SCNNode(geometry: baseGeometry)
         node.morpher = morpher
-
-        let newScene = SCNScene()
-        newScene.rootNode.addChildNode(node)
-        setupLighting(in: newScene)
-        let camera = setupCamera(in: newScene, target: node)
-
-        scene = newScene
-        bodyNode = node
-        cameraNode = camera
-        statusText = "Vertices: \(baseGeometry.sources.first?.vectorCount ?? 0)"
-
-        updateMorphWeights()
-        applySkinTone()
+        return node
     }
 
     private func loadGeometry(named name: String) -> SCNGeometry? {
@@ -173,9 +191,11 @@ struct AvatarView: View {
     /// aus der Deurenberg-Schätzung (Größe/Gewicht/Alter/Geschlecht). Dasselbe gilt
     /// fürs Gewicht: geloggter Wert aus dem Körper-Tab schlägt den Onboarding-Fallback.
     /// Muscular mischt einen Fettfreie-Masse-Proxy (sofort verfügbar) mit dem
-    /// trainingsbasierten Kraft-Level (baut sich über Zeit auf).
+    /// trainingsbasierten Kraft-Level (baut sich über Zeit auf). Dieselben beiden
+    /// Gewichte gelten für Körper, Unterwäsche und Haare gleichermaßen, damit alle
+    /// drei Teile synchron mitwachsen.
     private func updateMorphWeights() {
-        guard let profile, let morpher = bodyNode?.morpher, morpher.targets.count >= 2 else { return }
+        guard let profile else { return }
 
         let weightKg = bodyMetrics.first?.weightKg ?? profile.fallbackWeightKg
         let kfa = bodyMetrics.first?.bodyFatPercentage ?? BodyCompositionEstimator.estimatedBodyFatPercent(
@@ -192,17 +212,27 @@ struct AvatarView: View {
 
         let muscleWeight = leanWeight * (1 - profile.trainingInfluence) + trainingWeight * profile.trainingInfluence
 
-        morpher.setWeight(CGFloat(fatWeight), forTargetAt: 0)
-        morpher.setWeight(CGFloat(muscleWeight), forTargetAt: 1)
+        for node in [bodyNode, underwearNode, hairNode] {
+            guard let morpher = node?.morpher, morpher.targets.count >= 2 else { continue }
+            morpher.setWeight(CGFloat(fatWeight), forTargetAt: 0)
+            morpher.setWeight(CGFloat(muscleWeight), forTargetAt: 1)
+        }
     }
 
-    private func applySkinTone() {
-        guard let profile, let color = UIColor(hex: profile.skinColorHex) else { return }
+    private func applyMaterials() {
+        guard let profile else { return }
+        applyColor(profile.skinColorHex, to: bodyNode)
+        applyColor("#262529", to: underwearNode)
+        applyColor(profile.hairColorHex, to: hairNode)
+    }
+
+    private func applyColor(_ hex: String, to node: SCNNode?) {
+        guard let color = UIColor(hex: hex) else { return }
         let material = SCNMaterial()
         material.lightingModel = .lambert
         material.diffuse.contents = color
         material.isDoubleSided = true
-        bodyNode?.geometry?.materials = [material]
+        node?.geometry?.materials = [material]
     }
 
     private func normalized(_ value: Double, min minValue: Double, max maxValue: Double) -> Double {

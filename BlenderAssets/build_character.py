@@ -155,6 +155,75 @@ print("UV layers after cleanup:", [uv.name for uv in obj.data.uv_layers])
 print("Attributes after cleanup:", [a.name for a in obj.data.attributes])
 
 
+def extract_region_object(source_obj, name, z_frac_min, z_frac_max, offset_distance, color):
+    """Extracts a height-range band of source_obj's vertices — across ALL its
+    current shape keys (Basis/Fat/Muscular) — into a new, separate object.
+    Used for simple "painted-on" underwear/hair, since CharMorph ships no
+    clothing/hair assets for mb_female/mb_male (verified: char.assets == {}).
+
+    Offsets every copied vertex along its own Basis-state normal, so the
+    patch sits slightly above the skin (avoids z-fighting) regardless of
+    which side of the body it's on.
+    """
+    import bmesh
+
+    zs = basis_coords[:, 2]
+    zmin, zmax = float(zs.min()), float(zs.max())
+    height = zmax - zmin
+    z_lo = zmin + height * z_frac_min
+    z_hi = zmin + height * z_frac_max
+
+    keep_indices = {i for i in range(len(basis_coords)) if z_lo <= basis_coords[i][2] <= z_hi}
+
+    dup = source_obj.copy()
+    dup.data = source_obj.data.copy()
+    dup.name = name
+    bpy.context.collection.objects.link(dup)
+
+    # Pure bmesh, no mode_set/operators: avoids a reproducible bug where
+    # bpy.ops.mesh.delete() in EDIT mode, in --background scripts, sometimes
+    # affected the WRONG object (source_obj lost all its vertices for the
+    # "mb_male" character specifically, even though it was never made active).
+    bm = bmesh.new()
+    bm.from_mesh(dup.data)
+    bm.verts.ensure_lookup_table()
+    verts_to_delete = [v for v in bm.verts if v.index not in keep_indices]
+    bmesh.ops.delete(bm, geom=verts_to_delete, context="VERTS")
+    bm.to_mesh(dup.data)
+    bm.free()
+    dup.data.update()
+
+    indices = sorted(keep_indices)
+    normals = [tuple(v.normal) for v in dup.data.vertices]
+    for kb in dup.data.shape_keys.key_blocks:
+        coords = np.empty(len(dup.data.vertices) * 3, dtype=np.float64)
+        kb.data.foreach_get("co", coords)
+        coords = coords.reshape(-1, 3)
+        for i, n in enumerate(normals):
+            coords[i] += np.array(n) * offset_distance
+        kb.data.foreach_set("co", coords.reshape(-1))
+
+    mat = bpy.data.materials.new(f"{name}_mat")
+    mat.use_nodes = False
+    mat.diffuse_color = color
+    dup.data.materials.clear()
+    dup.data.materials.append(mat)
+
+    print(f"{name}: {len(indices)} vertices extracted (z {z_frac_min:.2f}-{z_frac_max:.2f})")
+    return dup
+
+
+# mb_female/mb_male ship with zero bundled assets (char.assets == {}), so
+# underwear and hair are built here as offset skin patches — they inherit
+# Basis/Fat/Muscular automatically since they're literal copies of body
+# vertices at this point in the pipeline.
+UNDERWEAR_COLOR = (0.08, 0.08, 0.1, 1.0)
+HAIR_COLOR = (0.15, 0.09, 0.06, 1.0)
+
+underwear_obj = extract_region_object(obj, "Underwear", 0.42, 0.58, 0.01, UNDERWEAR_COLOR)
+hair_obj = extract_region_object(obj, "Hair", 0.94, 1.0, 0.01, HAIR_COLOR)
+
+
 def export_shape_as_static(source_obj, key_name, out_path):
     """Bakes one shape key's absolute vertex positions into a plain,
     non-skinned mesh and exports it on its own — no Skeleton, no shape keys."""
@@ -185,7 +254,9 @@ def export_shape_as_static(source_obj, key_name, out_path):
     bpy.data.meshes.remove(new_mesh, do_unlink=True)
 
 
-# --- Export: three separate static, non-skinned meshes ---
+# --- Export: three separate static, non-skinned meshes per body part ---
 base_path = os.path.join(OUT_DIR, out_base_name)
 for shape_name in ("Basis", "Fat", "Muscular"):
     export_shape_as_static(obj, shape_name, f"{base_path}_{shape_name}.usdz")
+    export_shape_as_static(underwear_obj, shape_name, f"{base_path}_Underwear_{shape_name}.usdz")
+    export_shape_as_static(hair_obj, shape_name, f"{base_path}_Hair_{shape_name}.usdz")

@@ -1,6 +1,12 @@
 # Avatar-Charaktere (Phase 7, Option B)
 
-`build_character.py` erzeugt aus einem [CharMorph](https://github.com/Upliner/CharMorph)-Basis-Charakter **drei separate, nicht-skelettgebundene** Meshes: `<Name>_Basis.usdz`, `<Name>_Fat.usdz`, `<Name>_Muscular.usdz`.
+`build_character.py` erzeugt aus einem [CharMorph](https://github.com/Upliner/CharMorph)-Basis-Charakter drei Body-Parts — **Körper**, **Underwear**, **Hair** — je als **drei separate, nicht-skelettgebundene** Meshes: `<Name>_Basis.usdz`, `<Name>_Fat.usdz`, `<Name>_Muscular.usdz` (analog `<Name>_Underwear_*.usdz`, `<Name>_Hair_*.usdz`). Macht 9 Dateien pro Geschlecht, 18 insgesamt.
+
+## Unterwäsche &amp; Haare: warum "ausgeschnittene Haut" statt echter Assets
+
+`char.assets`, `char.default_assets`, `char.underwear` sind für `mb_female`/`mb_male` alle leer — CharMorph-db liefert für diese Basis-Charaktere **keine** Kleidung/Haare mit (verifiziert per Skript). Statt eigene Meshes zu modellieren, schneidet `extract_region_object()` einen Höhenbereich (Z-Achse) aus der Körper-Geometrie heraus (Hüfte für Unterwäsche, Scheitel für Haare), versetzt jeden Vertex entlang seiner eigenen Basis-Normale leicht nach außen (verhindert Z-Fighting mit der Haut) und exportiert das Ergebnis als eigenes Objekt mit eigenem Material. Dadurch erben beide automatisch Fat/Muscular — sie sind ja buchstäblich Kopien von Körper-Vertices.
+
+**Bug gefunden &amp; gefixt:** Die ursprüngliche Implementierung nutzte `bpy.ops.object.mode_set` + `bpy.ops.mesh.delete` (Edit-Mode-Operatoren). Das funktionierte für `mb_female`, aber bei `mb_male` leerte es reproduzierbar das **Quell-Mesh** auf 0 Vertices (ein bekanntes Problem: Edit-Mode-Operatoren in `--background`-Skripten können sich auf das falsche Objekt auswirken, wenn der Kontext nicht exakt stimmt). Fix: reines `bmesh`-Scripting ohne `mode_set`/Operatoren — direkt auf dem Mesh-Datenblock, kein Kontext-Umweg.
 
 ## Warum drei Dateien statt einer mit Shape Keys?
 
@@ -26,7 +32,7 @@ blender --background --python build_character.py -- mb_female LevelUp_Female
 blender --background --python build_character.py -- mb_male   LevelUp_Male
 ```
 
-Erzeugt `LevelUp_Female_Basis.usdz`, `_Fat.usdz`, `_Muscular.usdz` (und analog für Male). Alle sechs Dateien danach nach `Sources/LevelUp/Resources/` kopieren.
+Erzeugt `LevelUp_Female_Basis/Fat/Muscular.usdz`, `LevelUp_Female_Underwear_Basis/Fat/Muscular.usdz`, `LevelUp_Female_Hair_Basis/Fat/Muscular.usdz` (und analog für Male) — 9 Dateien pro Geschlecht. Alle danach nach `Sources/LevelUp/Resources/` kopieren.
 
 ## Vor jedem iOS-Push: lokal in Blender verifizieren
 
@@ -37,6 +43,12 @@ blender --background --python render_check.py -- "<Pfad>\LevelUp_Female_Fat.usdz
 ```
 
 Das prüft Export-Korrektheit (Topologie, Normalen, plausible Silhouette), aber **nicht** SceneKit-spezifisches Verhalten — dafür bleibt der eigentliche Geräte-Test nötig.
+
+`render_combined_check.py` macht dasselbe für Körper+Unterwäsche+Haare zusammen (prüft, ob die drei Teile richtig zueinander sitzen):
+
+```
+blender --background --python render_combined_check.py -- "<Pfad>\LevelUp_Female" "Basis" "<Pfad>\check.png"
+```
 
 ## SpikeTest/
 
