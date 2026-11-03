@@ -77,6 +77,30 @@ for k in to_remove:
 
 print("Final shape keys:", [k.name for k in obj.data.shape_keys.key_blocks])
 
+# --- Strip to one material, one UV set, no extra mask attributes ---
+# (SceneKit's USD importer is far less complete than Blender's/Pixar's reference
+# implementation; CharMorph exports ~10 materials + many per-ethnicity mask
+# primvars that may be too much for it to parse reliably.)
+first_material = obj.data.materials[0] if obj.data.materials else None
+obj.data.materials.clear()
+if first_material:
+    obj.data.materials.append(first_material)
+
+while len(obj.data.uv_layers) > 1:
+    obj.data.uv_layers.remove(obj.data.uv_layers[-1])
+
+for attr in list(obj.data.attributes):
+    if attr.name in ("position", "normal", obj.data.uv_layers[0].name if obj.data.uv_layers else ""):
+        continue
+    try:
+        obj.data.attributes.remove(attr)
+    except RuntimeError:
+        pass
+
+print("Materials after cleanup:", [m.name for m in obj.data.materials])
+print("UV layers after cleanup:", [uv.name for uv in obj.data.uv_layers])
+print("Attributes after cleanup:", [a.name for a in obj.data.attributes])
+
 # --- Export ---
 out_path = os.path.join(OUT_DIR, out_name)
 bpy.ops.wm.usd_export(filepath=out_path, selected_objects_only=False)
