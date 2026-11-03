@@ -117,8 +117,20 @@ print(f"Muscular corner keys ({len(muscular_keys)}): {muscular_keys}")
 bake_from_deltas("Fat", fat_keys, FAT_DELTA_SCALE)
 bake_from_deltas("Muscular", muscular_keys, MUSCULAR_DELTA_SCALE)
 
-# --- Strip down to just Basis / Fat / Muscular ---
-keep = {"Basis", "Fat", "Muscular"}
+# Phase 7.11: one face-shape axis (face width), driven at runtime by Vision
+# face-landmark ratios from the user's calibration photo — not by KFA/Kraft
+# like Fat/Muscular, so it's baked once here and applied as a static weight
+# from AvatarProfile.faceWidthWeight (see AvatarView.swift). Deliberately
+# scoped to ONE axis for now rather than CharMorph's dozen+ head sliders —
+# proves the mechanism; more axes can be added the same way later.
+FACE_KEY = "L2__Head_SizeX_max"
+if FACE_KEY in all_key_names:
+    bake_from_deltas("FaceWide", [FACE_KEY], 1.0)
+else:
+    print(f"WARNING: {FACE_KEY} not found, skipping FaceWide axis")
+
+# --- Strip down to just Basis / Fat / Muscular (/ FaceWide) ---
+keep = {"Basis", "Fat", "Muscular", "FaceWide"}
 sk = obj.data.shape_keys
 to_remove = [k for k in sk.key_blocks if k.name not in keep]
 print(f"Removing {len(to_remove)} raw morph shape keys, keeping {keep}")
@@ -264,3 +276,6 @@ for shape_name in ("Basis", "Fat", "Muscular"):
     export_shape_as_static(obj, shape_name, f"{base_path}_{shape_name}.usdz")
     export_shape_as_static(underwear_obj, shape_name, f"{base_path}_Underwear_{shape_name}.usdz")
     export_shape_as_static(hair_obj, shape_name, f"{base_path}_Hair_{shape_name}.usdz")
+
+if "FaceWide" in [k.name for k in obj.data.shape_keys.key_blocks]:
+    export_shape_as_static(obj, "FaceWide", f"{base_path}_FaceWide.usdz")

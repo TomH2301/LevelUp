@@ -74,7 +74,10 @@ struct AvatarView: View {
             .sheet(isPresented: $isCalibratingPhoto) {
                 if let profile {
                     PhotoCalibrationView(profile: profile)
-                        .onDisappear { applyMaterials() }
+                        .onDisappear {
+                            applyMaterials()
+                            updateMorphWeights()
+                        }
                 }
             }
             .sheet(isPresented: $isEditingBasicData) {
@@ -114,7 +117,7 @@ struct AvatarView: View {
         }
         let prefix = profile.gender == .female ? "LevelUp_Female" : "LevelUp_Male"
 
-        guard let body = loadBodyPart(prefix: prefix),
+        guard let body = loadBodyPart(prefix: prefix, extraTargets: ["FaceWide"]),
               let underwear = loadBodyPart(prefix: "\(prefix)_Underwear"),
               let hair = loadBodyPart(prefix: "\(prefix)_Hair") else {
             statusText = "Konnte eine der \(prefix)-Dateien nicht laden."
@@ -139,17 +142,26 @@ struct AvatarView: View {
         applyMaterials()
     }
 
-    /// Lädt Basis/Fat/Muscular für einen Körperteil und baut daraus einen Node
-    /// mit eigenem Morpher (2 Targets: Fat, Muscular).
-    private func loadBodyPart(prefix: String) -> SCNNode? {
+    /// Lädt Basis/Fat/Muscular (+ optionale Zusatz-Targets wie FaceWide) für
+    /// einen Körperteil und baut daraus einen Node mit eigenem Morpher.
+    /// Reihenfolge der Targets: Fat(0), Muscular(1), dann extraTargets in
+    /// angegebener Reihenfolge ab Index 2.
+    private func loadBodyPart(prefix: String, extraTargets: [String] = []) -> SCNNode? {
         guard let baseGeometry = loadGeometry(named: "\(prefix)_Basis"),
               let fatGeometry = loadGeometry(named: "\(prefix)_Fat"),
               let muscularGeometry = loadGeometry(named: "\(prefix)_Muscular") else {
             return nil
         }
 
+        var targets = [fatGeometry, muscularGeometry]
+        for extra in extraTargets {
+            if let geometry = loadGeometry(named: "\(prefix)_\(extra)") {
+                targets.append(geometry)
+            }
+        }
+
         let morpher = SCNMorpher()
-        morpher.targets = [fatGeometry, muscularGeometry]
+        morpher.targets = targets
         morpher.calculationMode = .normalized
 
         let node = SCNNode(geometry: baseGeometry)
@@ -230,6 +242,12 @@ struct AvatarView: View {
             guard let morpher = node?.morpher, morpher.targets.count >= 2 else { continue }
             morpher.setWeight(CGFloat(fatWeight), forTargetAt: 0)
             morpher.setWeight(CGFloat(muscleWeight), forTargetAt: 1)
+        }
+
+        // FaceWide (Index 2) nur am Körper vorhanden — einmalig aus der
+        // Foto-Kalibrierung, nicht aus Tracking-Daten wie Fat/Muscular.
+        if let morpher = bodyNode?.morpher, morpher.targets.count >= 3 {
+            morpher.setWeight(CGFloat(profile.faceWidthWeight), forTargetAt: 2)
         }
     }
 

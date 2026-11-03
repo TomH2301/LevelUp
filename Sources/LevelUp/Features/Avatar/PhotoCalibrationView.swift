@@ -9,6 +9,7 @@ struct PhotoCalibrationView: View {
     @State private var previewImage: UIImage?
     @State private var detectedSkinHex: String?
     @State private var detectedHairHex: String?
+    @State private var detectedFaceWidthWeight: Double?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -32,13 +33,26 @@ struct PhotoCalibrationView: View {
                     }
                 }
 
+                if let detectedFaceWidthWeight {
+                    Section {
+                        HStack {
+                            Text("Gesichtsform")
+                            Spacer()
+                            Text(faceWidthDescription(detectedFaceWidthWeight))
+                                .foregroundStyle(.secondary)
+                        }
+                    } footer: {
+                        Text("Grobe Annäherung aus den Gesichtsproportionen, keine fotorealistische Rekonstruktion.")
+                    }
+                }
+
                 if let errorMessage {
                     Section {
                         Text(errorMessage).foregroundStyle(.red)
                     }
                 }
             }
-            .navigationTitle("Farb-Kalibrierung")
+            .navigationTitle("Foto-Kalibrierung")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Abbrechen") { dismiss() }
@@ -67,10 +81,19 @@ struct PhotoCalibrationView: View {
         }
     }
 
+    private func faceWidthDescription(_ weight: Double) -> String {
+        switch weight {
+        case ..<0.35: return "schmal"
+        case 0.65...: return "breit"
+        default: return "mittel"
+        }
+    }
+
     private func loadAndAnalyze(_ item: PhotosPickerItem?) async {
         errorMessage = nil
         detectedSkinHex = nil
         detectedHairHex = nil
+        detectedFaceWidthWeight = nil
 
         guard let item,
               let data = try? await item.loadTransferable(type: Data.self),
@@ -86,6 +109,7 @@ struct PhotoCalibrationView: View {
         }
         detectedSkinHex = result.skin
         detectedHairHex = result.hair
+        detectedFaceWidthWeight = FaceShapeAnalyzer.estimatedFaceWidthWeight(image: image)
     }
 
     private func apply() {
@@ -93,6 +117,9 @@ struct PhotoCalibrationView: View {
         profile.skinColorHex = detectedSkinHex
         if let detectedHairHex {
             profile.hairColorHex = detectedHairHex
+        }
+        if let detectedFaceWidthWeight {
+            profile.faceWidthWeight = detectedFaceWidthWeight
         }
         dismiss()
     }
