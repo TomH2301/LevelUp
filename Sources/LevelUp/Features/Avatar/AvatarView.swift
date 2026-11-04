@@ -2,13 +2,6 @@ import SwiftUI
 import SceneKit
 import SwiftData
 
-enum AvatarViewAngle: String, CaseIterable, Identifiable {
-    case front = "Vorne"
-    case back = "Rücken"
-
-    var id: String { rawValue }
-}
-
 struct AvatarView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var profiles: [AvatarProfile]
@@ -17,7 +10,6 @@ struct AvatarView: View {
     @State private var scene = SCNScene()
     @State private var frontCameraNode: SCNNode?
     @State private var backCameraNode: SCNNode?
-    @State private var viewAngle: AvatarViewAngle = .front
     @State private var bodyNode: SCNNode?
     @State private var underwearNode: SCNNode?
     @State private var hairNode: SCNNode?
@@ -29,27 +21,17 @@ struct AvatarView: View {
 
     private var profile: AvatarProfile? { profiles.first }
 
-    private var activeCameraNode: SCNNode? {
-        viewAngle == .front ? frontCameraNode : backCameraNode
-    }
-
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Keine freie Kamerasteuerung (kein Zoom/Pan/Rotieren) — bewusst
-                // nur zwei feste, saubere Ansichten statt einer frei drehbaren
-                // Kamera, die unfertige Rückseiten/Nahtstellen zeigen könnte.
-                SceneView(scene: scene, pointOfView: activeCameraNode, options: [])
-                    .frame(maxHeight: .infinity)
-
-                Picker("Ansicht", selection: $viewAngle) {
-                    ForEach(AvatarViewAngle.allCases) { angle in
-                        Text(angle.rawValue).tag(angle)
-                    }
+                // Vorne/Rücken gleichzeitig nebeneinander statt Umschalt-
+                // Picker — und keine freie Kamerasteuerung (kein Zoom/Pan/
+                // Rotieren), bewusst nur die zwei festen Ansichten.
+                HStack(spacing: 1) {
+                    avatarSceneView(title: "Vorne", camera: frontCameraNode)
+                    avatarSceneView(title: "Rücken", camera: backCameraNode)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.top, 8)
+                .frame(maxHeight: .infinity)
 
                 Text(statusText)
                     .font(.caption2)
@@ -117,6 +99,15 @@ struct AvatarView: View {
         }
     }
 
+    private func avatarSceneView(title: String, camera: SCNNode?) -> some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            SceneView(scene: scene, pointOfView: camera, options: [])
+        }
+    }
+
     /// Lädt Körper, Unterwäsche, Haare (und BH bei Frauen) aus unserem
     /// eigenen Binärformat (siehe BinaryMeshLoader.swift / BlenderAssets/
     /// build_character_mh.py) statt aus USDZ — das garantiert Vertex-
@@ -142,13 +133,25 @@ struct AvatarView: View {
         let eyes = loadEyes(prefix: prefix)
 
         let newScene = SCNScene()
-        newScene.rootNode.addChildNode(body)
-        newScene.rootNode.addChildNode(underwear)
-        newScene.rootNode.addChildNode(hair)
-        if let bra { newScene.rootNode.addChildNode(bra) }
-        if let eyes { newScene.rootNode.addChildNode(eyes) }
+
+        // Blender ist Z-up, SceneKit/USD-Konvention ist Y-up. Der alte
+        // USDZ-Export hat diese Umrechnung automatisch miterledigt; unser
+        // eigenes Binärformat (BinaryMeshLoader) gibt die rohen Blender-
+        // Koordinaten unverändert weiter, deshalb drehen wir hier einmalig
+        // um -90° um die X-Achse (Blender Z→SceneKit Y, Blender Y→SceneKit
+        // -Z). Ohne das lag der Avatar quasi "auf dem Rücken" — die
+        // Vorne-Kamera blickte von oben auf den Kopf statt von vorne.
+        let avatarRoot = SCNNode()
+        avatarRoot.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
+        avatarRoot.addChildNode(body)
+        avatarRoot.addChildNode(underwear)
+        avatarRoot.addChildNode(hair)
+        if let bra { avatarRoot.addChildNode(bra) }
+        if let eyes { avatarRoot.addChildNode(eyes) }
+        newScene.rootNode.addChildNode(avatarRoot)
+
         setupLighting(in: newScene)
-        let (front, back) = setupCameras(in: newScene, target: body)
+        let (front, back) = setupCameras(in: newScene, target: avatarRoot)
 
         scene = newScene
         bodyNode = body
@@ -223,7 +226,11 @@ struct AvatarView: View {
     private func setupCameras(in scene: SCNScene, target: SCNNode) -> (front: SCNNode, back: SCNNode) {
         let (localCenter, radius) = target.boundingSphere
         let worldCenter = target.convertPosition(localCenter, to: nil)
-        let distance = max(radius * 3.4, 0.6)
+        // Jede der beiden Split-Screen-Hälften ist nur noch halb so breit
+        // wie vorher die Vollbild-Ansicht — bei gleichbleibendem Kamera-
+        // Blickwinkel würde das die ausgestreckten T-Pose-Arme seitlich
+        // abschneiden, daher mehr Abstand als vorher (3.4 → 4.6).
+        let distance = max(radius * 4.6, 0.8)
 
         let front = SCNNode()
         front.camera = SCNCamera()

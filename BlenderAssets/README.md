@@ -46,6 +46,16 @@ blender --command extension install blender_org.mpfb --enable
 
 Lokal verifiziert vor dem Swift-Umbau mit `render_binary_check.py` (parst das Binärformat in reinem Python nach, rendert es — Ergebnis war pixelgleich mit dem vorherigen USDZ-Render).
 
+**Folge-Bug beim ersten Geräte-Test:** Vorne-Kamera blickte von oben auf den Kopf, Rücken-Ansicht zeigte nur Weiß — Geometrie selbst war einwandfrei (siehe Blender-Renders). Ursache: Blender ist intern Z-up, SceneKit/USD-Konvention ist Y-up. Der alte USD-Export hat diese Umrechnung automatisch miterledigt; unser Binärformat gibt rohe Blender-Koordinaten unverändert weiter, es fehlte also die Achsen-Konvertierung. Fix (rein Swift-seitig, kein Blender-Rebuild nötig): `AvatarView.swift` packt Body/Underwear/Hair/Bra/Eyes jetzt in einen gemeinsamen `avatarRoot`-Node mit `eulerAngles = (-π/2, 0, 0)` (Blender Z→SceneKit Y, Blender Y→SceneKit -Z), bevor die Kameras relativ dazu aufgebaut werden.
+
+`render_binary_combined_check.py` ist das aktuelle lokale Komplett-Check-Tool: parst Body+Underwear+Hair+(Bra)+Eyes zusammen aus dem Binärformat, weist zur besseren Unterscheidbarkeit Platzhalterfarben zu und rendert sowohl Vorne- als auch Rücken-Ansicht in einem Aufruf:
+
+```
+blender --background --python render_binary_combined_check.py -- "<Pfad>\LevelUp_Female" 1 "" "<Pfad>\front.png" "<Pfad>\back.png"
+```
+
+(zweites Argument: `1`/`0` ob BH vorhanden ist; drittes Argument: Shape-Name `Fat`/`Muscular`/leer für Basis.)
+
 ## Wie „Fat"/„Muscular" berechnet werden
 
 `bake_named_shape()` setzt `scene.mpfb_macropanel_weight`/`muscle`, liest die ausgewertete (depsgraph) Mesh-Position und backt sie als benannten Shape-Key (`Fat`, `Muscular`) auf das Basis-Objekt — beide Achsen bewegen sich unabhängig von derselben 0.5-„Durchschnitts"-Baseline zum jeweiligen Maximum (1.0), analog zum additiven Fat/Muscular-Split der alten Pipeline.
@@ -73,7 +83,7 @@ blender --background --python render_binary_check.py -- "<Pfad>\LevelUp_Female_B
 blender --background --python render_binary_check.py -- "<Pfad>\LevelUp_Female_Body" "" "<Pfad>\check.png"   # Basis
 ```
 
-`render_check.py`/`render_combined_check_mh.py` funktionieren weiterhin für die `.usdz`-Dateien (aktuell nur noch `_Eyes.usdz`).
+`render_check.py` funktioniert weiterhin für einzelne `.usdz`-Dateien (aktuell nur noch `_Eyes.usdz` relevant). `render_combined_check_mh.py` wurde entfernt (ging von per-Shape-`.usdz`-Dateien für Körperteile aus, die es nicht mehr gibt) — `render_binary_combined_check.py` ersetzt es.
 
 ## SpikeTest/
 
