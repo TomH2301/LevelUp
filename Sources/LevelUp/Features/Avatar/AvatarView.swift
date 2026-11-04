@@ -2,27 +2,54 @@ import SwiftUI
 import SceneKit
 import SwiftData
 
+enum AvatarViewAngle: String, CaseIterable, Identifiable {
+    case front = "Vorne"
+    case back = "Rücken"
+
+    var id: String { rawValue }
+}
+
 struct AvatarView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var profiles: [AvatarProfile]
     @Query(sort: \BodyMetricEntry.date, order: .reverse) private var bodyMetrics: [BodyMetricEntry]
 
     @State private var scene = SCNScene()
-    @State private var cameraNode: SCNNode?
+    @State private var frontCameraNode: SCNNode?
+    @State private var backCameraNode: SCNNode?
+    @State private var viewAngle: AvatarViewAngle = .front
     @State private var bodyNode: SCNNode?
     @State private var underwearNode: SCNNode?
     @State private var hairNode: SCNNode?
+    @State private var braNode: SCNNode?
+    @State private var eyesNode: SCNNode?
     @State private var isCalibratingPhoto = false
     @State private var isEditingBasicData = false
     @State private var statusText: String = "Lädt…"
 
     private var profile: AvatarProfile? { profiles.first }
 
+    private var activeCameraNode: SCNNode? {
+        viewAngle == .front ? frontCameraNode : backCameraNode
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                SceneView(scene: scene, pointOfView: cameraNode, options: [.allowsCameraControl])
+                // Keine freie Kamerasteuerung (kein Zoom/Pan/Rotieren) — bewusst
+                // nur zwei feste, saubere Ansichten statt einer frei drehbaren
+                // Kamera, die unfertige Rückseiten/Nahtstellen zeigen könnte.
+                SceneView(scene: scene, pointOfView: activeCameraNode, options: [])
                     .frame(maxHeight: .infinity)
+
+                Picker("Ansicht", selection: $viewAngle) {
+                    ForEach(AvatarViewAngle.allCases) { angle in
+                        Text(angle.rawValue).tag(angle)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.top, 8)
 
                 Text(statusText)
                     .font(.caption2)
@@ -90,11 +117,14 @@ struct AvatarView: View {
         }
     }
 
-    /// Lädt Körper, Unterwäsche und Haare je als drei SEPARATE, nicht-skelett-
-    /// gebundene Meshes (siehe BlenderAssets/build_character.py) und baut für
-    /// jeden Teil einen eigenen SCNMorpher selbst zusammen, statt ihn aus einer
-    /// USD-Skelett-Struktur zu übernehmen — die hat sich in SceneKit als
-    /// unzuverlässig erwiesen (Mesh wurde verzerrt).
+    /// Lädt Körper, Unterwäsche, Haare (und BH bei Frauen) aus unserem
+    /// eigenen Binärformat (siehe BinaryMeshLoader.swift / BlenderAssets/
+    /// build_character_mh.py) statt aus USDZ — das garantiert Vertex-
+    /// Übereinstimmung zwischen Basis und Fat/Muscular-Targets durch den
+    /// Aufbau selbst, statt sich auf Apples USD-Importer zu verlassen (der
+    /// mehrere unabhängig importierte Dateien nicht zuverlässig identisch
+    /// indiziert — das hat am Gerät zur Kopf-Explosion geführt). Augen
+    /// morphen nicht mit, bleiben daher normale USDZ-Objekte.
     private func loadScene() {
         guard let profile else {
             statusText = "Kein Avatar-Profil."
@@ -102,72 +132,71 @@ struct AvatarView: View {
         }
         let prefix = profile.gender == .female ? "LevelUp_Female" : "LevelUp_Male"
 
-        guard let body = loadBodyPart(prefix: prefix, extraTargets: ["FaceWide"]),
+        guard let body = loadBodyPart(prefix: "\(prefix)_Body"),
               let underwear = loadBodyPart(prefix: "\(prefix)_Underwear"),
               let hair = loadBodyPart(prefix: "\(prefix)_Hair") else {
             statusText = "Konnte eine der \(prefix)-Dateien nicht laden."
             return
         }
+        let bra = profile.gender == .female ? loadBodyPart(prefix: "\(prefix)_Bra") : nil
+        let eyes = loadEyes(prefix: prefix)
 
         let newScene = SCNScene()
         newScene.rootNode.addChildNode(body)
         newScene.rootNode.addChildNode(underwear)
         newScene.rootNode.addChildNode(hair)
+        if let bra { newScene.rootNode.addChildNode(bra) }
+        if let eyes { newScene.rootNode.addChildNode(eyes) }
         setupLighting(in: newScene)
-        let camera = setupCamera(in: newScene, target: body)
+        let (front, back) = setupCameras(in: newScene, target: body)
 
         scene = newScene
         bodyNode = body
         underwearNode = underwear
         hairNode = hair
-        cameraNode = camera
+        braNode = bra
+        eyesNode = eyes
+        frontCameraNode = front
+        backCameraNode = back
         statusText = "Vertices: \(body.geometry?.sources.first?.vectorCount ?? 0)"
 
         updateMorphWeights()
         applyMaterials()
     }
 
-    /// Lädt Basis/Fat/Muscular (+ optionale Zusatz-Targets wie FaceWide) für
-    /// einen Körperteil und baut daraus einen Node mit eigenem Morpher.
-    /// Reihenfolge der Targets: Fat(0), Muscular(1), dann extraTargets in
-    /// angegebener Reihenfolge ab Index 2.
-    private func loadBodyPart(prefix: String, extraTargets: [String] = []) -> SCNNode? {
-        guard let baseGeometry = loadGeometry(named: "\(prefix)_Basis"),
-              let fatGeometry = loadGeometry(named: "\(prefix)_Fat"),
-              let muscularGeometry = loadGeometry(named: "\(prefix)_Muscular") else {
-            return nil
+    /// Lädt Basis + Fat/Muscular-Morph-Targets für einen Körperteil aus dem
+    /// Binärformat und baut daraus einen Node mit eigenem Morpher.
+    /// Target-Reihenfolge: Fat(0), Muscular(1).
+    private func loadBodyPart(prefix: String) -> SCNNode? {
+        guard let base = BinaryMeshLoader.loadMesh(named: prefix) else { return nil }
+
+        let fat = BinaryMeshLoader.loadMorphTarget(named: prefix, shape: "Fat", vertexCount: base.vertexCount)
+        let muscular = BinaryMeshLoader.loadMorphTarget(named: prefix, shape: "Muscular", vertexCount: base.vertexCount)
+        let targets = [fat, muscular].compactMap { $0 }
+
+        let node = SCNNode(geometry: base.geometry)
+        if targets.count == 2 {
+            let morpher = SCNMorpher()
+            morpher.targets = targets
+            // .additive, not .normalized: Fat/Muscular are independent,
+            // stackable axes. In .normalized mode they competed for a
+            // shared weight budget — increasing KFA visibly shrank the
+            // Muscular contribution and the figure looked THINNER as fat
+            // went up.
+            morpher.calculationMode = .additive
+            node.morpher = morpher
         }
-
-        var targets = [fatGeometry, muscularGeometry]
-        for extra in extraTargets {
-            if let geometry = loadGeometry(named: "\(prefix)_\(extra)") {
-                targets.append(geometry)
-            }
-        }
-
-        let morpher = SCNMorpher()
-        morpher.targets = targets
-        // .additive, not .normalized: Fat/Muscular/FaceWide are independent,
-        // stackable axes. In .normalized mode they competed for a shared
-        // weight budget — increasing KFA visibly shrank the Muscular
-        // contribution and the figure looked THINNER as fat went up.
-        morpher.calculationMode = .additive
-
-        let node = SCNNode(geometry: baseGeometry)
-        node.morpher = morpher
         return node
     }
 
-    private func loadGeometry(named name: String) -> SCNGeometry? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "usdz"),
+    /// Augen morphen nicht mit Fat/Muscular (Augengröße bleibt konstant),
+    /// bleiben also ein ganz normal über USDZ geladenes, statisches Objekt
+    /// — kein Korrespondenz-Risiko, weil nichts mit ihnen abgeglichen
+    /// werden muss.
+    private func loadEyes(prefix: String) -> SCNNode? {
+        guard let url = Bundle.main.url(forResource: "\(prefix)_Eyes", withExtension: "usdz"),
               let loaded = try? SCNScene(url: url) else { return nil }
-        var geometry: SCNGeometry?
-        loaded.rootNode.enumerateHierarchy { node, _ in
-            if geometry == nil, let g = node.geometry {
-                geometry = g
-            }
-        }
-        return geometry
+        return loaded.rootNode
     }
 
     private func setupLighting(in scene: SCNScene) {
@@ -187,19 +216,28 @@ struct AvatarView: View {
         scene.rootNode.addChildNode(ambientNode)
     }
 
-    private func setupCamera(in scene: SCNScene, target: SCNNode) -> SCNNode {
-        let camera = SCNCamera()
-        let cameraNode = SCNNode()
-        cameraNode.camera = camera
-
+    /// Baut zwei feste Kameras (Vorne/Rücken) statt einer frei drehbaren. Die
+    /// Distanz basiert auf der UNGEMORPHTEN Basis-Hülle (Gewichte sind beim
+    /// Scene-Aufbau noch 0) mit großzügigem Rand, damit auch die stärkste
+    /// Fat/Muscular-Ausprägung noch vollständig ins Bild passt.
+    private func setupCameras(in scene: SCNScene, target: SCNNode) -> (front: SCNNode, back: SCNNode) {
         let (localCenter, radius) = target.boundingSphere
         let worldCenter = target.convertPosition(localCenter, to: nil)
-        let distance = max(radius * 2.6, 0.5)
+        let distance = max(radius * 3.4, 0.6)
 
-        cameraNode.position = SCNVector3(worldCenter.x, worldCenter.y, worldCenter.z + distance)
-        cameraNode.look(at: worldCenter)
-        scene.rootNode.addChildNode(cameraNode)
-        return cameraNode
+        let front = SCNNode()
+        front.camera = SCNCamera()
+        front.position = SCNVector3(worldCenter.x, worldCenter.y, worldCenter.z + distance)
+        front.look(at: worldCenter)
+        scene.rootNode.addChildNode(front)
+
+        let back = SCNNode()
+        back.camera = SCNCamera()
+        back.position = SCNVector3(worldCenter.x, worldCenter.y, worldCenter.z - distance)
+        back.look(at: worldCenter)
+        scene.rootNode.addChildNode(back)
+
+        return (front, back)
     }
 
     /// Beide Achsen sind rein aus deinen echten Körperdaten abgeleitet — nicht
@@ -221,16 +259,10 @@ struct AvatarView: View {
         let leanIndex = BodyCompositionEstimator.leanMassIndex(weightKg: weightKg, bodyFatPercent: kfa, heightCm: profile.heightCm)
         let muscleWeight = normalized(leanIndex, min: 16, max: 26)
 
-        for node in [bodyNode, underwearNode, hairNode] {
+        for node in [bodyNode, underwearNode, hairNode, braNode] {
             guard let morpher = node?.morpher, morpher.targets.count >= 2 else { continue }
             morpher.setWeight(CGFloat(fatWeight), forTargetAt: 0)
             morpher.setWeight(CGFloat(muscleWeight), forTargetAt: 1)
-        }
-
-        // FaceWide (Index 2) nur am Körper vorhanden — einmalig aus der
-        // Foto-Kalibrierung, nicht aus Tracking-Daten wie Fat/Muscular.
-        if let morpher = bodyNode?.morpher, morpher.targets.count >= 3 {
-            morpher.setWeight(CGFloat(profile.faceWidthWeight), forTargetAt: 2)
         }
     }
 
@@ -238,7 +270,24 @@ struct AvatarView: View {
         guard let profile else { return }
         applyColor(profile.skinColorHex, to: bodyNode)
         applyColor("#262529", to: underwearNode)
+        applyColor("#262529", to: braNode)
         applyColor(profile.hairColorHex, to: hairNode)
+        applyEyeColors()
+    }
+
+    /// Lederhaut (weiß) und Iris (fest bräunlich, keine Nutzereinstellung) —
+    /// Augen sind zwei Objekte pro Seite (sclera + iris), erkennbar am
+    /// Node-Namen aus BlenderAssets/build_character_mh.py's add_eyeball().
+    private func applyEyeColors() {
+        guard let eyesNode else { return }
+        eyesNode.enumerateHierarchy { node, _ in
+            guard let name = node.name, node.geometry != nil else { return }
+            if name.contains("iris") {
+                applyColor("#40291A", to: node)
+            } else if name.contains("sclera") {
+                applyColor("#EBE8E0", to: node)
+            }
+        }
     }
 
     private func applyColor(_ hex: String, to node: SCNNode?) {

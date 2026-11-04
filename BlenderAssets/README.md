@@ -1,71 +1,85 @@
-# Avatar-Charaktere (Phase 7, Option B)
+# Avatar-Charaktere (Phase 7)
 
-`build_character.py` erzeugt aus einem [CharMorph](https://github.com/Upliner/CharMorph)-Basis-Charakter drei Body-Parts — **Körper**, **Underwear**, **Hair** — je als **drei separate, nicht-skelettgebundene** Meshes: `<Name>_Basis.usdz`, `<Name>_Fat.usdz`, `<Name>_Muscular.usdz` (analog `<Name>_Underwear_*.usdz`, `<Name>_Hair_*.usdz`). Macht 9 Dateien pro Geschlecht, 18 insgesamt.
+`build_character_mh.py` erzeugt aus [MPFB2](https://static.makehumancommunity.org/mpfb/index.html) (MakeHuman Plugin für Blender) pro Geschlecht vier Körperteile — **Body**, **Underwear**, **Hair**, bei Frauen zusätzlich **Bra** — und exportiert jedes als eigenes Binär-Mesh (`<Name>_mesh.bin`) plus zwei Morph-Target-Dateien (`<Name>_Fat.bin`, `<Name>_Muscular.bin`). Dazu kommt je ein `<Geschlecht>_Eyes.usdz` (Augen morphen nicht mit, bleiben ein normales USDZ).
 
-## Unterwäsche &amp; Haare: warum "ausgeschnittene Haut" statt echter Assets
+**Ersetzt die ursprüngliche CharMorph-Pipeline** (`build_character.py`, noch im Repo als Referenz). Grund für den Wechsel und alle dabei gefixten Bugs: siehe unten.
 
-`char.assets`, `char.default_assets`, `char.underwear` sind für `mb_female`/`mb_male` alle leer — CharMorph-db liefert für diese Basis-Charaktere **keine** Kleidung/Haare mit (verifiziert per Skript). Statt eigene Meshes zu modellieren, schneidet `extract_region_object()` einen Höhenbereich (Z-Achse) aus der Körper-Geometrie heraus (Hüfte für Unterwäsche, Scheitel für Haare), versetzt jeden Vertex entlang seiner eigenen Basis-Normale leicht nach außen (verhindert Z-Fighting mit der Haut) und exportiert das Ergebnis als eigenes Objekt mit eigenem Material. Dadurch erben beide automatisch Fat/Muscular — sie sind ja buchstäblich Kopien von Körper-Vertices.
+## Warum MakeHuman/MPFB2 statt CharMorph
 
-**Bug gefunden &amp; gefixt:** Die ursprüngliche Implementierung nutzte `bpy.ops.object.mode_set` + `bpy.ops.mesh.delete` (Edit-Mode-Operatoren). Das funktionierte für `mb_female`, aber bei `mb_male` leerte es reproduzierbar das **Quell-Mesh** auf 0 Vertices (ein bekanntes Problem: Edit-Mode-Operatoren in `--background`-Skripten können sich auf das falsche Objekt auswirken, wenn der Kontext nicht exakt stimmt). Fix: reines `bmesh`-Scripting ohne `mode_set`/Operatoren — direkt auf dem Mesh-Datenblock, kein Kontext-Umweg.
+CharMorph/MB-Lab liefert für `mb_female`/`mb_male` **keine** Assets mit (`char.assets == {}` — keine Augen, keine Haare, keine Kleidung), und der selbstgebaute Mass/Tone-Muskel-Morph blieb trotz Tuning zu subtil. MPFB2 hat dagegen **eingebaute, community-abgestimmte** `weight`/`muscle`-Phänotyp-Regler (`scene.mpfb_macropanel_weight/muscle`) und präzise benannte Vertex-Gruppen (`body`, `scalp`, `nipple`, `helper-genital`, `helper-l-eye`, …) statt CharMorphs Z-Bereichs-Rätselraten.
 
-## Warum drei Dateien statt einer mit Shape Keys?
+MPFB2 ist als **Blender Extension** installiert (nicht als Legacy-Addon wie CharMorph), ist nach der Installation automatisch aktiv — kein `addon_enable()` nötig:
 
-Ursprünglich wurde ein einziges USDZ mit eingebauten Shape Keys exportiert (Blenders übliche Methode). Das scheiterte in zwei Schritten, beide inzwischen gefunden und dokumentiert:
+```
+blender --command extension repo-list        # prüft Repos
+blender --command extension sync              # synct extensions.blender.org
+blender --command extension install blender_org.mpfb --enable
+```
 
-1. **Blender exportiert Shape Keys immer über ein `UsdSkel`-Skelett**, selbst ohne echte Armature. Apples SceneKit-USD-Importer interpretiert diese Skelett-Bindung fehlerhaft und verzerrt das Mesh massiv beim Rendern (bestätigt: Blender selbst zeigt den Export korrekt, SceneKit zeigt eine kollabierte/verzerrte Form). → Lösung: komplett skelettfreie, statische Meshes exportieren, Morphing selbst in SceneKit-Code zusammenbauen (`SCNMorpher.targets` programmatisch gesetzt, siehe `AvatarView.swift`).
-2. **`bpy.ops.object.shape_key_add(from_mix=True)` backt im `--background`-Modus falsche (kollabierte) Geometrie** — unabhängig davon, welche Morph-Werte tatsächlich gesetzt sind (reproduziert sogar mit komplett zurückgesetzten Reglern). Die einzelnen rohen CharMorph-Shape-Keys selbst sind nachweislich korrekt. → Lösung: `Fat`/`Muscular` werden selbst per NumPy aus den Vertex-Deltas der rohen Einzel-Shape-Keys berechnet (`bake_from_deltas()` in `build_character.py`), `from_mix` wird gar nicht mehr benutzt.
+(Erfordert `preferences.system.use_online_access = True`, per Default aus — siehe Kommentare in `build_character_mh.py`.)
 
-## FaceWide (Phase 7.11)
+## Wichtige MPFB2-Eigenheiten, die zu Bugs geführt haben
 
-Ein viertes, körperweites Shape-Target `FaceWide` wird zusätzlich gebacken, direkt aus dem Rohschlüssel `L2__Head_SizeX_max` (kein Mass/Tone-Kombi, ein einfacher Einzel-Morph). Anders als Fat/Muscular wird sein Gewicht nicht live aus Tracking-Daten berechnet, sondern einmalig aus Vision-Gesichtslandmarken beim Foto-Kalibrieren (`FaceShapeAnalyzer.swift`) und in `AvatarProfile.faceWidthWeight` gespeichert. Bewusst auf eine Achse beschränkt (Gesichtsbreite) statt der vollen CharMorph-Kopf-Reglerpalette — das Prinzip ist aber identisch erweiterbar auf weitere Achsen.
+1. **`weight`/`muscle`-Properties ändern nur die GEOMETRIE, nicht `obj.data.vertices`.** Shape-Key-Mixing passiert nur im ausgewerteten (depsgraph-evaluated) Mesh — `obj.data.vertices[i].co` bleibt immer bei der Basis-Pose. Wer die Positionen nach einer Gewichts-Änderung braucht, muss `obj.evaluated_get(depsgraph).data` lesen, nicht `obj.data`.
+2. **Die "Hide helpers"-Mask-Modifier** (Vertex-Gruppe `body`, invert=False) blendet alle Helper-Gruppen aus (Augenhöhlen, Zähne, Zunge, Genitalien, aber auch **`helper-skirt`/`helper-tights`** — interne Kleidungs-Anpass-Platzhalter!). Wird der Modifier einfach entfernt (für stabile Vertex-Indizes beim Baking, siehe Punkt 1), werden diese Platzhalter-Meshes sichtbar — sah aus wie ein knöchellanges Geister-Kleid. Fix: nach dem Entfernen des Modifiers wird explizit auf die `body`-Vertex-Gruppe reduziert (alle anderen Vertices werden per `bmesh` gelöscht), bevor überhaupt gebacken wird.
+3. **Keine Genitalien-Modellierung:** `helper-genital` hat **0% Überlappung** mit der `body`-Gruppe — das Reduzieren auf `body` entfernt diese Geometrie bereits vollständig und sauber (keine separate Glättung nötig, kein Loch, da die `body`-Gruppe darunter schon eine neutrale Fläche hat).
+4. **Keine Augen-Geometrie:** MPFB hat nur einen Shader-Trick ("procedural eyes", `node_trees/procedural_eyes.json`) — kein echtes Augapfel-Mesh, und Shader-Graphen überleben keinen USD-Export. Deshalb bauen wir selbst zwei einfache UV-Spheres pro Auge (Lederhaut + Iris, `add_eyeball()`), positioniert am `helper-l-eye`/`helper-r-eye`-Gruppenzentrum (das VOR dem Strip auf `body` gemerkt werden muss, da die Gruppe danach nicht mehr existiert).
+5. **Z-Band-Filter für BH/Unterwäsche braucht eine X-Begrenzung:** Ein reiner Höhen-Filter (z.B. Brusthöhe) erfasst im T-Pose auch die ausgestreckten Handgelenke, die zufällig auf gleicher Höhe liegen — sichtbar als symmetrische "Donut"-Artefakte an beiden Handgelenken, die erst unter Fat/Muscular auffielen. Fix: zusätzlich auf `|x| < 55% der maximalen (Arm-)Breite` einschränken, siehe `z_band_group()`.
+
+## SceneKit-Vertex-Korrespondenz-Bug (kritischster Fix)
+
+**Symptom am Gerät:** Nach den ersten MakeHuman-Exporten explodierte der Kopf, sobald Fat/Muscular-Gewichte ungleich 0 waren, die Hose saß falsch, generell "sieht nicht menschlich aus" — obwohl jede einzelne exportierte Datei in Blender für sich genommen einwandfrei aussah.
+
+**Ursache:** Die alte Architektur lud Basis/Fat/Muscular als **drei separate `.usdz`-Dateien**, die SceneKit unabhängig voneinander importiert. Damit `SCNMorpher` funktioniert, muss Vertex Nr. N in jeder Datei exakt denselben Punkt meinen. Apples USD-Importer kann Vertices beim Einlesen aber anhand von Position+Normale neu aufteilen — und das potenziell pro Datei unterschiedlich, weil sich die Normalen zwischen den Formen unterscheiden (verschärft durch den Smooth-Shading-Fix, der pro-Vertex statt pro-Fläche-Normalen einführte). Das war nie verifizierbar, nur erhofft.
+
+**Fix:** Kein USD-Import mehr für Körperteile. `build_character_mh.py`s `export_mesh_and_morphs_binary()` schreibt stattdessen ein eigenes, simples Binärformat:
+
+```
+<prefix>_mesh.bin:   vertexCount(u32) triangleCount(u32)
+                     positions[vertexCount*3] f32   (Basis)
+                     normals[vertexCount*3] f32     (Basis)
+                     triangleIndices[triangleCount*3] u32
+<prefix>_<Shape>.bin: positions[vertexCount*3] f32  (gleiche Vertex-Reihenfolge wie oben)
+```
+
+`Sources/LevelUp/Features/Avatar/BinaryMeshLoader.swift` parst das direkt in `SCNGeometry`/`SCNGeometrySource` — keine USD-Importer-Unsicherheit mehr, Vertex-Korrespondenz ist durch den Aufbau selbst garantiert (alle Shapes kommen aus derselben Blender-Mesh, nur mit unterschiedlichen Shape-Key-Positionen). Augen brauchen das nicht (morphen nicht, bleiben normales `.usdz`).
+
+Lokal verifiziert vor dem Swift-Umbau mit `render_binary_check.py` (parst das Binärformat in reinem Python nach, rendert es — Ergebnis war pixelgleich mit dem vorherigen USDZ-Render).
 
 ## Wie „Fat"/„Muscular" berechnet werden
 
-Für jede Körperregion (Bauch, Arme, Beine, Schultern, …) gibt es bei CharMorph einen 2-achsigen „Mass/Tone"-Kombi-Morph mit vier Eckpunkt-Shape-Keys (`max-max`, `max-min`, `min-max`, `min-min`). `build_character.py` nimmt für **Fat** die `_max-min`-Ecke (viel Masse, wenig Tonus) jeder Region, für **Muscular** die `_min-max`-Ecke (wenig Masse, viel Tonus), summiert die Vertex-Deltas aller Regionen relativ zu `Basis` auf (mit `DELTA_SCALE`, um Überlagerungen zwischen benachbarten Regionen abzumildern) und schreibt das Ergebnis direkt in einen neuen, sauberen Shape Key.
+`bake_named_shape()` setzt `scene.mpfb_macropanel_weight`/`muscle`, liest die ausgewertete (depsgraph) Mesh-Position und backt sie als benannten Shape-Key (`Fat`, `Muscular`) auf das Basis-Objekt — beide Achsen bewegen sich unabhängig von derselben 0.5-„Durchschnitts"-Baseline zum jeweiligen Maximum (1.0), analog zum additiven Fat/Muscular-Split der alten Pipeline.
 
-**`MUSCULAR_DELTA_SCALE` auf 1.5 erhöht (war 0.75):** Bei 0.75 war der Muskel-Effekt neben dem viel dramatischeren Fat-Effekt (0.5) praktisch unsichtbar — CharMorphs rohe „Tone"-Ecke ist an sich sehr subtil. Bei 2.2 wurde Brust/Bauch/Arme klar sichtbar definiert, aber im Becken-/Leistenbereich entstand eine sichtbare Verzerrung (vermutlich Überlagerung der Gluteus-Region-Deltas bei zu hoher Skalierung). 1.5 ist der per lokalem `render_combined_check.py`-Vergleich bestätigte Sweet Spot: deutlich sichtbare Definition (Schultern, Bauch, Arme, Beine) ohne Geometrie-Artefakte.
-
-## Runtime-Morphing: additive statt normalized, keine manuelle Kalibrierung
-
-**Bug gefunden &amp; gefixt (Phase 7.12):** `SCNMorpher.calculationMode` stand auf `.normalized` — dabei konkurrieren alle Targets (Fat/Muscular/FaceWide) um ein gemeinsames Gewichts-Budget. Folge: ein höherer KFA-Wert (mehr Fat-Gewicht) drückte automatisch das Muscular-Gewicht herunter, die Figur wurde beim Zunehmen sichtbar *dünner* statt dicker, und Muscular ließ sich kaum spürbar erhöhen. Fix: `.additive` — Fat und Muscular sind unabhängige, stapelbare Achsen und müssen sich nicht um ein Budget streiten (siehe `AvatarView.swift`, `loadBodyPart`).
-
-**Manuelle Kalibrierungs-UI entfernt:** Es gab eine Einstellungsansicht (`AvatarCalibrationView`), mit der man Fat/Muscular-Gewichtsgrenzen und eine Kraft-Level-Mischung von Hand einstellen konnte. Explizit unerwünscht — der Avatar soll sich ausschließlich aus echten Körperdaten ableiten, nicht aus manueller Einstellung. Entfernt: die View-Datei, der Kamera-Toolbar-Button, das Sheet, sowie die `trainingInfluence`-Kraft-Level-Mischung in `updateMorphWeights()`. Die Gewichts-Normalisierungsgrenzen (KFA 6–35%, Lean-Mass-Index 16–26) sind jetzt feste Konstanten in `AvatarView.swift` statt einstellbarer `AvatarProfile`-Felder.
-
-## Smooth Shading beim Export
-
-**Bug gefunden &amp; gefixt:** Die exportierten statischen Meshes sahen in SceneKit „Minecraft-artig" aus — blockig, ohne weiche Konturen — obwohl Blenders eigene Workbench-Vorschau glatt aussah. Ursache: `export_shape_as_static()` baut pro Shape-Key ein komplett neues `bpy.data.meshes.new(...)`-Objekt aus rohen Vertex-Koordinaten; dabei wird das `use_smooth`-Flag der Polygone nicht automatisch gesetzt (Default ist flach). Fix: nach `foreach_set("co", ...)` wird für jedes Polygon `poly.use_smooth = True` gesetzt, bevor exportiert wird.
-
-## Einmaliges Setup (bereits erledigt, hier nur zur Doku)
+## Einmaliges Setup
 
 1. Blender 5.2+ installieren.
-2. [CharMorph-Addon](https://github.com/Upliner/CharMorph/releases/latest) herunterladen und per `bpy.ops.preferences.addon_install` + `addon_enable` installieren.
-3. [CharMorph-db](https://github.com/Upliner/CharMorph-db) (Charakterdaten, ~1,1 GB) in `<Blender-Addons-Pfad>/CharMorph/data/` kopieren.
+2. MPFB2 installieren (siehe oben, einmalig — danach dauerhaft in der Blender-Installation vorhanden).
 
 ## Charaktere neu erzeugen
 
 ```
-blender --background --python build_character.py -- mb_female LevelUp_Female
-blender --background --python build_character.py -- mb_male   LevelUp_Male
+blender --background --python build_character_mh.py -- female LevelUp_Female
+blender --background --python build_character_mh.py -- male   LevelUp_Male
 ```
 
-Erzeugt `LevelUp_Female_Basis/Fat/Muscular.usdz`, `LevelUp_Female_Underwear_Basis/Fat/Muscular.usdz`, `LevelUp_Female_Hair_Basis/Fat/Muscular.usdz` (und analog für Male) — 9 Dateien pro Geschlecht. Alle danach nach `Sources/LevelUp/Resources/` kopieren.
+Erzeugt je Geschlecht: `<Name>_Body_mesh.bin` (+ `_Fat.bin`/`_Muscular.bin`), analog `_Underwear_*`, `_Hair_*`, (nur weiblich) `_Bra_*`, sowie `<Name>_Eyes.usdz`. Alle danach nach `Sources/LevelUp/Resources/` kopieren.
 
 ## Vor jedem iOS-Push: lokal in Blender verifizieren
 
-`render_check.py` importiert eine exportierte `.usdz` zurück und rendert einen Screenshot mit Workbench-Solid-Shading (zeigt Normalen-/Schattierungsfehler zuverlässig, anders als ein dunkel beleuchteter EEVEE-Render):
+`render_binary_check.py` parst ein exportiertes `.bin`-Paar (Mesh + optionaler Morph-Shape) in reinem Python nach und rendert es — das ist die beste verfügbare lokale Verifikation, weil es denselben Parsing-Pfad testet, den auch `BinaryMeshLoader.swift` benutzt (nur eben in Python statt Swift):
 
 ```
-blender --background --python render_check.py -- "<Pfad>\LevelUp_Female_Fat.usdz" "<Pfad>\check.png"
+blender --background --python render_binary_check.py -- "<Pfad>\LevelUp_Female_Body" Fat "<Pfad>\check.png"
+blender --background --python render_binary_check.py -- "<Pfad>\LevelUp_Female_Body" "" "<Pfad>\check.png"   # Basis
 ```
 
-Das prüft Export-Korrektheit (Topologie, Normalen, plausible Silhouette), aber **nicht** SceneKit-spezifisches Verhalten — dafür bleibt der eigentliche Geräte-Test nötig.
-
-`render_combined_check.py` macht dasselbe für Körper+Unterwäsche+Haare zusammen (prüft, ob die drei Teile richtig zueinander sitzen):
-
-```
-blender --background --python render_combined_check.py -- "<Pfad>\LevelUp_Female" "Basis" "<Pfad>\check.png"
-```
+`render_check.py`/`render_combined_check_mh.py` funktionieren weiterhin für die `.usdz`-Dateien (aktuell nur noch `_Eyes.usdz`).
 
 ## SpikeTest/
 
-Der ursprüngliche Validierungs-Test (Kugel mit einem Shape Key), mit dem der grundsätzliche Export-Pfad Blender → USDZ → SceneKit `SCNMorpher` bestätigt wurde, bevor der echte Charakter gebaut wurde.
+Der ursprüngliche Validierungs-Test (Kugel mit einem Shape Key), mit dem der grundsätzliche Export-Pfad Blender → USDZ → SceneKit `SCNMorpher` bestätigt wurde, bevor der echte Charakter gebaut wurde. Historisch — die aktuelle Pipeline nutzt für Körperteile gar kein USDZ/SCNMorpher-über-USD mehr (siehe oben).
+
+## Bekannte offene Punkte
+
+- Leichte Kerben am Rand des Haar-Patches (Grenze der `scalp`-Vertex-Gruppe) — kosmetisch, nicht weiter verfolgt.
+- `AvatarProfile.faceWidthWeight` / `FaceShapeAnalyzer` / die Foto-Kalibrierung erkennen weiterhin Gesichtsbreite aus einem Foto, aber es gibt aktuell kein FaceWide-Morph-Target in der MakeHuman-Pipeline (gab es bei CharMorph) — der Wert wird gespeichert, aber nicht mehr auf den Avatar angewendet. Müsste bei Bedarf wie Fat/Muscular als zusätzliches `.bin`-Morph-Target ergänzt werden.
